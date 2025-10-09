@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Email Outreach - RankZen Control Panel{% endblock %}
+{% block header %}Email Outreach{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-number">{{ total_emails_sent }}</div>
+    <div class="stat-label">Total Emails Sent</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number">{{ outreach_emails }}</div>
+    <div class="stat-label">Outreach Emails</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number">{{ followup_emails }}</div>
+    <div class="stat-label">Follow-up Emails</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number">{{ pending_followups }}</div>
+    <div class="stat-label">Pending Follow-ups</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>📧 Email Outreach Control</h3>
+  <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+    <div>
+      <strong>Follow-up Check:</strong>
+      <span>Last run: {{ last_followup_check or 'Never' }}</span>
+    </div>
+    <div style="margin-left: auto;">
+      <button onclick="checkFollowUps()" class="btn">🔍 Check Follow-ups</button>
+    </div>
+  </div>
+  
+  <p>System automatically checks for follow-ups every 3 hours. Click the button above to manually trigger a check.</p>
+</div>
+
+<div class="card">
+  <h3>📋 Recent Email Activity</h3>
+  {% if recent_emails %}
+  <table>
+    <thead>
+      <tr>
+        <th>Recipient</th>
+        <th>Domain</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Sent At</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for email in recent_emails %}
+      <tr>
+        <td>{{ email.recipient_email }}</td>
+        <td>{{ email.domain }}</td>
+        <td>
+          <span class="status-badge status-{% if email.campaign_type == 'outreach' %}sent{% else %}audited{% endif %}">
+            {{ email.campaign_type.title() }}
+          </span>
+        </td>
+        <td>
+          <span class="status-badge status-{% if email.status == 'sent' %}sent{% else %}audited{% endif %}">
+            {{ email.status.title() }}
+          </span>
+        </td>
+        <td>{{ email.sent_at.strftime('%Y-%m-%d %H:%M') if email.sent_at else 'N/A' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No email activity found.</p>
+  {% endif %}
+</div>
+
+<script>
+function checkFollowUps() {
+  fetch('/admin/email/check_followups', { method: 'POST' })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status) {
+        alert('Follow-up check completed successfully!');
+        location.reload();
+      } else {
+        alert('Error checking follow-ups: ' + (data.error || 'Unknown error'));
+      }
+    })
+    .catch(error => alert('Error: ' + error));
+}
+</script>
+{% endblock %}

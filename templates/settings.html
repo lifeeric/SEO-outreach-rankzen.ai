@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - RankZen Control Panel{% endblock %}
+{% block header %}Settings{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h3>⚙️ Configuration Settings</h3>
+  <p>Configure API keys, target industries, regions, and message templates.</p>
+
+  <form method="POST">
+    {{ form.hidden_tag() }}
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem;">
+      <div>
+        <h4>🔑 API Keys</h4>
+
+        <div class="form-group">
+          {{ form.openai_api_key.label }}
+          {{ form.openai_api_key(class="form-control", placeholder="sk-...") }}
+        </div>
+
+        <div class="form-group">
+          {{ form.serper_api_key.label }}
+          {{ form.serper_api_key(class="form-control", placeholder="Your Serper API key") }}
+        </div>
+
+        <div class="form-group">
+          {{ form.captcha_api_key.label }}
+          {{ form.captcha_api_key(class="form-control", placeholder="Your Captcha API key (optional)") }}
+        </div>
+
+        <div class="form-group">
+          {{ form.resend_api_key.label }}
+          {{ form.resend_api_key(class="form-control", placeholder="Your Resend API key") }}
+          <small style="color: var(--muted);">Required for email outreach functionality</small>
+        </div>
+
+        <h4 style="margin-top: 2rem;">💳 Stripe Configuration</h4>
+
+        <div class="form-group">
+          {{ form.stripe_secret_key.label }}
+          {{ form.stripe_secret_key(class="form-control", placeholder="sk_...") }}
+        </div>
+
+        <div class="form-group">
+          {{ form.stripe_publishable_key.label }}
+          {{ form.stripe_publishable_key(class="form-control", placeholder="pk_...") }}
+        </div>
+
+        <div class="form-group">
+          {{ form.stripe_product_key.label }}
+          {{ form.stripe_product_key(class="form-control", placeholder="prod_...") }}
+        </div>
+      </div>
+
+      <div>
+        <h4>🎯 Targeting</h4>
+
+        <div class="form-group">
+          {{ form.target_industries.label }}
+          {{ form.target_industries(class="form-control", placeholder="landscaping,real_estate,plumbers,hvac,roofers,lawyers") }}
+          <small style="color: var(--muted);">Comma-separated list of industries to target</small>
+        </div>
+
+        <div class="form-group">
+          {{ form.target_regions.label }}
+          {{ form.target_regions(class="form-control", placeholder="New York City,Miami-Dade,Austin,Los Angeles,Phoenix") }}
+          <small style="color: var(--muted);">Comma-separated list of regions to target</small>
+        </div>
+
+        <h4 style="margin-top: 2rem;">📧 Message Template</h4>
+
+        <div class="form-group">
+          {{ form.message_template.label }}
+          {{ form.message_template(class="form-control", placeholder="Enter your outreach message template here...") }}
+          <small style="color: var(--muted);">
+            Use variables: {{BusinessName}}, {{FirstName}}, {{Score}}, {{Issue}}, {{TopFix}}, {{City}}, {{Keyword}}
+          </small>
+        </div>
+
+        <h4 style="margin-top: 2rem;">📧 Outreach Templates (JSON)</h4>
+
+        <div class="form-group">
+          {{ form.outreach_templates.label }}
+          {{ form.outreach_templates(class="form-control", placeholder="Enter your outreach templates in JSON format...", rows="10") }}
+          <small style="color: var(--muted);">JSON format for all outreach templates. Leave empty to use default templates.</small>
+        </div>
+
+        <h4 style="margin-top: 2rem;">🔐 Admin Password</h4>
+
+        <div class="form-group">
+          {{ form.admin_password.label }}
+          {{ form.admin_password(class="form-control", placeholder="Leave blank to keep current password") }}
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 2rem; text-align: center;">
+      {{ form.submit(class="btn") }}
+    </div>
+  </form>
+</div>
+
+<!-- Clear Data Section -->
+<div class="card">
+  <h3>🗑️ Clear Data</h3>
+  <p>Clear all leads, logs, and CSV data while preserving your settings and API keys.</p>
+  <p><strong style="color: var(--error);">⚠️ This action cannot be undone. All data except settings will be permanently deleted.</strong></p>
+  
+  <div id="clear-data-result" style="margin-bottom: 1rem; display: none;"></div>
+  
+  <div style="display: flex; gap: 1rem; align-items: center; max-width: 500px;">
+    <input type="password" id="admin-password" placeholder="Enter admin password to confirm" style="flex: 1; padding: 0.75rem; background: var(--panel); border: 1px solid var(--muted); border-radius: var(--radius); color: var(--text); font-family: inherit;">
+    <button onclick="clearData()" class="btn btn-danger" id="clear-data-btn">Clear All Data</button>
+  </div>
+</div>
+
+<div class="card">
+  <h4>💡 Template Variables</h4>
+  <p>You can use these variables in your message templates:</p>
+  <ul style="columns: 2; margin: 1rem 0;">
+    <li><code>{{BusinessName}}</code> - Business name</li>
+    <li><code>{{FirstName}}</code> - Contact first name</li>
+    <li><code>{{Score}}</code> - SEO score (0-100)</li>
+    <li><code>{{Issue}}</code> - Main SEO issues</li>
+    <li><code>{{TopFix}}</code> - Primary recommendation</li>
+    <li><code>{{City}}</code> - Business city</li>
+    <li><code>{{Keyword}}</code> - Target keyword</li>
+    <li><code>{{IssueListShort}}</code> - Brief issues list</li>
+    <li><code>{{ETA}}</code> - Estimated completion time</li>
+    <li><code>{{SenderName}}</code> - Your sender name</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h4>📝 Outreach Templates Format</h4>
+  <p>Example JSON format for outreach templates:</p>
+  <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto;">
+{
+  "cold_email_1": {
+    "subject": "Quick fixes to lift {{BusinessName}}'s local rankings",
+    "body": "Hi {{FirstName}}, we ran a 60-second audit on {{BusinessName}} and found {{Issue}} hurting visibility.\n\nScore: {{Score}}/100. Main issues: {{IssueListShort}}.\n\nFixing {{TopFix}} could get you more customers from Google.\n\nWould you like help fixing this? We can implement these improvements this week for $100 and show results in 7 days.\n\nJust reply \"YES\" if interested or \"NO\" if not.\n\n— {{SenderName}}, Rankzen"
+  },
+  "cold_email_2": {
+    "subject": "{{City}} competitors outrank you for \"{{Keyword}}\"",
+    "body": "Hey {{FirstName}}, competitors are beating {{BusinessName}} for \"{{Keyword}}.\"\n\nWe found: {{IssueListShort}}.\n\nFixing these issues could help you outrank competitors and get more local customers.\n\nWould you like us to fix these for $100? We can complete the work in {{ETA}}.\n\nReply \"YES\" if you want help or \"NO\" if not interested."
+  },
+  "sms": {
+    "body": "Hi {{FirstName}}, Rankzen here. Your {{BusinessName}} audit score: {{Score}}/100. Main fix needed: {{TopFix}}. Would you like help fixing this for $100? Reply YES or NO."
+  },
+  "linkedin_dm": {
+    "body": "{{FirstName}}, quick audit on {{BusinessName}} shows {{Issue}} blocking local leads. Score {{Score}}/100. Would you like help fixing this for $100? Can implement {{TopFix}} in 48h. Reply YES/NO."
+  },
+  "cold_call": {
+    "opener": "\"{{FirstName}}? {{YourName}} from Rankzen. Your {{Channel}} profile is missing {{KeyGap}}, likely costing {{EstImpact}}. Would you like help fixing this for $100? I can implement {{TopFix}} this week. Interested?\""
+  }
+}</pre>
+</div>
+
+<script>
+function clearData() {
+  const passwordInput = document.getElementById('admin-password');
+  const password = passwordInput.value.trim();
+  const resultDiv = document.getElementById('clear-data-result');
+  const clearButton = document.getElementById('clear-data-btn');
+  
+  // Validate password
+  if (!password) {
+    showClearDataResult('Please enter your admin password to confirm', 'error');
+    return;
+  }
+  
+  // Disable button and show loading state
+  clearButton.disabled = true;
+  clearButton.textContent = 'Clearing...';
+  resultDiv.style.display = 'none';
+  
+  // Send request to clear data
+  fetch('/admin/settings/clear-data', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ password: password })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      showClearDataResult(data.message, 'success');
+      passwordInput.value = ''; // Clear the password input
+    } else {
+      showClearDataResult('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  })
+  .catch(error => {
+    showClearDataResult('Error: ' + error, 'error');
+  })
+  .finally(() => {
+    // Re-enable button
+    clearButton.disabled = false;
+    clearButton.textContent = 'Clear All Data';
+  });
+}
+
+function showClearDataResult(message, type) {
+  const resultDiv = document.getElementById('clear-data-result');
+  resultDiv.textContent = message;
+  resultDiv.className = type === 'success' ? 'alert alert-success' : 'alert alert-error';
+  resultDiv.style.display = 'block';
+  
+  // Auto-hide success messages after 5 seconds
+  if (type === 'success') {
+    setTimeout(() => {
+      resultDiv.style.display = 'none';
+    }, 5000);
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}RankZen Control Panel{% endblock %}</title>
+  <meta name="theme-color" content="#0f172a" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #0f172a;
+      --card: #111827;
+      --muted: #9ca3af;
+      --text: #e5e7eb;
+      --brand: #22d3ee;
+      --brand-2: #60a5fa;
+      --shadow: 0 10px 30px rgba(2,8,23,.35);
+      --radius: 18px;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: linear-gradient(180deg, var(--bg), #0d1326 40%, #0a0f1f 100%);
+      color: var(--text); font-family: system-ui, -apple-system, Roboto, Inter, sans-serif;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    .btn {
+      background: linear-gradient(90deg,var(--brand),var(--brand-2));
+      color:#041019; border:none; border-radius:999px; padding:0.75rem 1.25rem;
+      font-weight:600; cursor:pointer; display: inline-block; text-decoration: none;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+    .btn-danger { background: var(--error); color: white; }
+    .sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; width: 250px;
+      background: var(--panel); padding: 1rem; box-shadow: var(--shadow);
+      overflow-y: auto;
+    }
+    .sidebar nav { margin-top: 2rem; }
+    .sidebar nav a {
+      display: block; padding: 0.75rem 1rem; margin: 0.25rem 0;
+      border-radius: var(--radius); color: var(--muted);
+      text-decoration: none; transition: all 0.2s;
+    }
+    .sidebar nav a:hover, .sidebar nav a.active {
+      background: var(--card); color: var(--text);
+    }
+    .main-content {
+      margin-left: 250px; padding: 2rem; min-height: 100vh;
+    }
+    header {
+      background: rgba(15,23,42,.9); padding: 1rem 2rem; margin: -2rem -2rem 2rem -2rem;
+      display:flex; justify-content:space-between; align-items:center;
+      border-radius: 0 0 var(--radius) var(--radius);
+    }
+    header h1 { margin: 0; font-size: 1.5rem; }
+    .card {
+      background: var(--card); border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: var(--shadow); margin-bottom: 1rem;
+    }
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;
+    }
+    .stat-card {
+      background: var(--card); border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: var(--shadow); text-align: center;
+    }
+    .stat-number { font-size: 2rem; font-weight: bold; color: var(--brand); }
+    .stat-label { color: var(--muted); font-size: 0.9rem; margin-top: 0.5rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    table th, table td {
+      padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--panel);
+    }
+    table th { background: var(--panel); font-weight: 600; }
+    .status-badge {
+      padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+    }
+    .status-audited { background: var(--warning); color: white; }
+    .status-sent { background: var(--brand); color: white; }
+    .status-responded { background: var(--success); color: white; }
+    .log-info { color: var(--text); }
+    .log-warning { color: var(--warning); }
+    .log-error { color: var(--error); }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%; padding: 0.75rem; background: var(--panel); border: 1px solid var(--muted);
+      border-radius: var(--radius); color: var(--text); font-family: inherit;
+    }
+    .form-group textarea { min-height: 100px; resize: vertical; }
+    .alert {
+      padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem;
+    }
+    .alert-success { background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); color: var(--success); }
+    .alert-error { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); color: var(--error); }
+    .pagination {
+      display: flex; justify-content: center; align-items: center; gap: 0.5rem; margin-top: 2rem;
+    }
+    .pagination a, .pagination span {
+      padding: 0.5rem 1rem; background: var(--panel); border-radius: var(--radius);
+      text-decoration: none; color: var(--text);
+    }
+    .pagination .active { background: var(--brand); color: white; }
+    @media (max-width: 768px) {
+      .sidebar { width: 100%; position: relative; margin-bottom: 2rem; }
+      .main-content { margin-left: 0; }
+      .stats-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom: 1rem;">
+      <img src="{{ url_for('static', filename='logo.jpeg') }}" alt="RankZen" style="width:28px; height:28px; border-radius:6px; object-fit:cover;" />
+      <h2 style="margin: 0; color: var(--brand);">RankZen</h2>
+    </div>
+    <nav>
+      <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">📊 Dashboard</a>
+      <a href="{{ url_for('leads') }}" class="{% if request.endpoint == 'leads' %}active{% endif %}">👥 Leads</a>
+      <a href="{{ url_for('email_outreach') }}" class="{% if request.endpoint == 'email_outreach' %}active{% endif %}">📧 Email Outreach</a>
+      <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active{% endif %}">⚙️ Settings</a>
+      <a href="{{ url_for('logs') }}" class="{% if request.endpoint == 'logs' %}active{% endif %}">📝 Logs</a>
+      <a href="{{ url_for('logout') }}">🚪 Logout</a>
+    </nav>
+  </div>
+
+  <div class="main-content">
+    <header>
+      <h1>{% block header %}Control Panel{% endblock %}</h1>
+      <div>
+        <span id="current-time"></span>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ 'success' if category == 'success' else 'error' }}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </div>
+
+  <script>
+    function updateTime() {
+      const now = new Date();
+      document.getElementById('current-time').textContent = now.toLocaleString();
+    }
+    updateTime();
+    setInterval(updateTime, 1000);
+  </script>
+</body>
+</html>

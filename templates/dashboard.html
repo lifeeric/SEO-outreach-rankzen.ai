@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - RankZen Control Panel{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-number" id="total-leads">0</div>
+    <div class="stat-label">Total Leads</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number" id="audited-leads">0</div>
+    <div class="stat-label">Audited</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number" id="sent-leads">0</div>
+    <div class="stat-label">Outreach Sent</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number" id="responded-leads">0</div>
+    <div class="stat-label">Responses</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>📧 Send Test Email</h3>
+  <div id="test-email-result" style="margin-bottom: 1rem; display: none;"></div>
+  <div style="display: flex; gap: 1rem; align-items: center;">
+    <input type="email" id="test-email-address" placeholder="Enter recipient email address" style="flex: 1; padding: 0.75rem; background: var(--panel); border: 1px solid var(--muted); border-radius: var(--radius); color: var(--text); font-family: inherit;">
+    <button onclick="sendTestEmail()" class="btn" id="test-email-btn">Test Email</button>
+  </div>
+</div>
+
+<div class="card">
+  <h3>🤖 Bot Control</h3>
+  <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+    <div>
+      <strong>Status:</strong>
+      <span id="bot-status" style="color: var(--error)">Stopped</span>
+    </div>
+    <div style="margin-left: auto;">
+      <button id="start-bot-btn" onclick="startBot()" class="btn">▶️ Start Bot</button>
+      <button id="stop-bot-btn" onclick="stopBot()" class="btn btn-danger" style="display: none;">⏹️ Stop Bot</button>
+    </div>
+  </div>
+
+  <div id="bot-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+    <div><strong>Total Discovered:</strong> <span id="total-discovered">0</span></div>
+    <div><strong>Total Audited:</strong> <span id="total-audited">0</span></div>
+    <div><strong>Outreach Sent:</strong> <span id="total-outreach">0</span></div>
+    <div><strong>Daily Audits:</strong> <span id="daily-audits">0</span></div>
+    <div><strong>Daily Outreach:</strong> <span id="daily-outreach">0</span></div>
+    <div><strong>Uptime:</strong> <span id="uptime">0.0</span>h</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>📝 Recent Activity</h3>
+  <div id="activity-log">
+    <!-- Activity logs will be populated here -->
+  </div>
+</div>
+
+<script>
+let statusCheckInterval;
+let dashboardUpdateInterval;
+
+// Function to update dashboard data
+function updateDashboard() {
+  fetch('/admin/api/dashboard-data')
+    .then(response => response.json())
+    .then(data => {
+      // Update lead counts
+      document.getElementById('total-leads').textContent = data.total_leads;
+      document.getElementById('audited-leads').textContent = data.audited_leads;
+      document.getElementById('sent-leads').textContent = data.sent_leads;
+      document.getElementById('responded-leads').textContent = data.responded_leads;
+      
+      // Update bot status
+      const botStatusElement = document.getElementById('bot-status');
+      botStatusElement.textContent = data.bot_running ? 'Running' : 'Stopped';
+      botStatusElement.style.color = data.bot_running ? 'var(--success)' : 'var(--error)';
+      
+      // Show appropriate bot control buttons
+      document.getElementById('start-bot-btn').style.display = data.bot_running ? 'none' : 'inline-block';
+      document.getElementById('stop-bot-btn').style.display = data.bot_running ? 'inline-block' : 'none';
+      
+      // Update bot stats
+      if (data.bot_stats) {
+        document.getElementById('total-discovered').textContent = data.bot_stats.total_sites_discovered;
+        document.getElementById('total-audited').textContent = data.bot_stats.total_sites_audited;
+        document.getElementById('total-outreach').textContent = data.bot_stats.total_outreach_sent;
+        document.getElementById('daily-audits').textContent = data.bot_stats.daily_audits;
+        document.getElementById('daily-outreach').textContent = data.bot_stats.daily_outreach;
+        document.getElementById('uptime').textContent = data.bot_stats.uptime_hours.toFixed(1);
+      }
+      
+      // Update activity log
+      const activityLogElement = document.getElementById('activity-log');
+      activityLogElement.innerHTML = '';
+      
+      data.recent_logs.forEach(log => {
+        const logElement = document.createElement('div');
+        logElement.className = `log-${log.level.toLowerCase()}`;
+        logElement.style.padding = '0.5rem';
+        logElement.style.borderBottom = '1px solid var(--panel)';
+        
+        const timeElement = document.createElement('small');
+        timeElement.style.color = 'var(--muted)';
+        timeElement.textContent = new Date(log.timestamp).toLocaleTimeString();
+        
+        const messageElement = document.createElement('span');
+        messageElement.style.marginLeft = '1rem';
+        messageElement.textContent = log.message;
+        
+        logElement.appendChild(timeElement);
+        logElement.appendChild(messageElement);
+        
+        if (log.category !== 'general') {
+          const categoryElement = document.createElement('small');
+          categoryElement.style.color = 'var(--brand)';
+          categoryElement.style.marginLeft = '1rem';
+          categoryElement.textContent = `[${log.category}]`;
+          logElement.appendChild(categoryElement);
+        }
+        
+        activityLogElement.appendChild(logElement);
+      });
+    })
+    .catch(error => console.error('Dashboard update error:', error));
+}
+
+function sendTestEmail() {
+  const emailInput = document.getElementById('test-email-address');
+  const email = emailInput.value.trim();
+  const resultDiv = document.getElementById('test-email-result');
+  const sendButton = document.getElementById('test-email-btn');
+  
+  // Validate email
+  if (!email) {
+    showTestEmailResult('Please enter an email address', 'error');
+    return;
+  }
+  
+  // Simple email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    showTestEmailResult('Please enter a valid email address', 'error');
+    return;
+  }
+  
+  // Disable button and show loading state
+  sendButton.disabled = true;
+  sendButton.textContent = 'Sending...';
+  resultDiv.style.display = 'none';
+  
+  // Send test email
+  fetch('/admin/send-test-email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email: email })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      showTestEmailResult('Test email sent successfully!', 'success');
+      emailInput.value = ''; // Clear the input
+    } else {
+      showTestEmailResult('Failed to send test email: ' + (data.error || 'Unknown error'), 'error');
+    }
+  })
+  .catch(error => {
+    showTestEmailResult('Error sending test email: ' + error, 'error');
+  })
+  .finally(() => {
+    // Re-enable button
+    sendButton.disabled = false;
+    sendButton.textContent = 'Test Email';
+  });
+}
+
+function showTestEmailResult(message, type) {
+  const resultDiv = document.getElementById('test-email-result');
+  resultDiv.textContent = message;
+  resultDiv.className = type === 'success' ? 'alert alert-success' : 'alert alert-error';
+  resultDiv.style.display = 'block';
+  
+  // Auto-hide success messages after 5 seconds
+  if (type === 'success') {
+    setTimeout(() => {
+      resultDiv.style.display = 'none';
+    }, 5000);
+  }
+}
+
+function startBot() {
+  fetch('/admin/bot/start', { method: 'POST' })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'started') {
+        updateDashboard(); // Refresh dashboard immediately
+      } else {
+        alert('Error starting bot: ' + (data.error || 'Unknown error'));
+      }
+    })
+    .catch(error => alert('Error: ' + error));
+}
+
+function stopBot() {
+  fetch('/admin/bot/stop', { method: 'POST' })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'stopped') {
+        updateDashboard(); // Refresh dashboard immediately
+      } else {
+        alert('Error stopping bot: ' + (data.error || 'Unknown error'));
+      }
+    })
+    .catch(error => alert('Error: ' + error));
+}
+
+// Initialize dashboard update
+updateDashboard(); // Load initial data
+dashboardUpdateInterval = setInterval(updateDashboard, 5000); // Update every 5 seconds
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval);
+  }
+  if (dashboardUpdateInterval) {
+    clearInterval(dashboardUpdateInterval);
+  }
+});
+</script>
+{% endblock %}

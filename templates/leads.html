@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Leads - RankZen Control Panel{% endblock %}
+{% block header %}Leads Management{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap: 1rem;">
+    <div>
+      <h3>👥 Contacted Businesses</h3>
+      <p>Track the status of all businesses we've audited and contacted.</p>
+    </div>
+    <div>
+      <a href="{{ url_for('download_leads_csv') }}" class="btn">Download CSV</a>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Domain</th>
+        <th>Business Name</th>
+        <th>Status</th>
+        <th>SEO Score</th>
+        <th>Contact Form</th>
+        <th>Outreach Sent</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+      <tr>
+        <td><a href="https://{{ lead.domain }}" target="_blank">{{ lead.domain }}</a></td>
+        <td>{{ lead.business_name or 'N/A' }}</td>
+        <td>
+          <span class="status-badge status-{{ lead.status }}">
+            {{ lead.status.title() }}
+          </span>
+        </td>
+        <td>{{ lead.seo_score if lead.seo_score else 'N/A' }}</td>
+        <td>{{ '✅' if lead.contact_form_found else '❌' }}</td>
+        <td>{{ '✅' if lead.outreach_sent else '❌' }}</td>
+        <td>{{ lead.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if pagination %}
+  <div class="pagination">
+    {% if pagination.has_prev %}
+      <a href="{{ url_for('leads', page=pagination.prev_num) }}">&laquo; Previous</a>
+    {% endif %}
+
+    {% for page_num in pagination.iter_pages() %}
+      {% if page_num %}
+        {% if page_num == pagination.page %}
+          <span class="active">{{ page_num }}</span>
+        {% else %}
+          <a href="{{ url_for('leads', page=page_num) }}">{{ page_num }}</a>
+        {% endif %}
+      {% else %}
+        <span>...</span>
+      {% endif %}
+    {% endfor %}
+
+    {% if pagination.has_next %}
+      <a href="{{ url_for('leads', page=pagination.next_num) }}">Next &raquo;</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if not leads %}
+<div class="card">
+  <p style="text-align: center; color: var(--muted);">
+    No leads found. The bot will populate this list as it discovers and audits businesses.
+  </p>
+</div>
+{% endif %}
+{% endblock %}
