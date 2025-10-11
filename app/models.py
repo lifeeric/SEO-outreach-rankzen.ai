@@ -71,6 +71,8 @@ class ContactForm(BaseModel):
     submitted: bool = False
     submission_date: Optional[datetime] = None
     error_message: Optional[str] = None
+    email_used: Optional[str] = None
+    submission_method: str = "form"
 
 class OutreachMessage(BaseModel):
     """Outreach message content"""

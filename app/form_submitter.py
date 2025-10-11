@@ -1,5 +1,5 @@
-import requests
 import logging
+import requests
 import time
 from typing import Dict, List, Optional, Any
 from urllib.parse import urljoin, urlparse
@@ -11,6 +11,7 @@ from app.models import ContactForm, OutreachMessage, BusinessSite
 from app.utils import extract_domain, clean_url, is_valid_url, data_manager
 from app.captcha_solver import CaptchaSolver
 from app.email_sender import email_sender
+from app.network_client import http_client, DeadHostError
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,9 @@ class FormSubmitter:
     """Handles automatic form submission with CAPTCHA solving"""
     
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
+        self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
+        }
         self.captcha_solver = CaptchaSolver()
     
     def submit_contact_form(self, site: BusinessSite, message: OutreachMessage) -> ContactForm:
@@ -31,28 +31,18 @@ class FormSubmitter:
         """
         if not site.contact_form_url:
             logger.warning(f"No contact form URL for {site.domain}")
-            
-            # Try to send email as fallback
-            if hasattr(site, 'email') and site.email:
-                if email_sender.send_outreach_email(site, message, site.email):
-                    logger.info(f"📧 Email sent as fallback for {site.domain}")
-                    return ContactForm(
-                        url=str(site.url),
-                        submitted=True,
-                        error_message=None
-                    )
-            
-            return ContactForm(
-                url=str(site.url),
-                error_message="No contact form found"
-            )
+            return self._fallback_to_email(site, message, reason="no_contact_form")
         
         try:
             form_url = str(site.contact_form_url)
             logger.info(f"Submitting contact form for {site.domain}")
+
+            if not http_client.is_reachable(form_url):
+                logger.warning(f"Contact form unreachable for {site.domain}, falling back to email")
+                return self._fallback_to_email(site, message, reason="contact_form_unreachable")
             
             # Get the form page
-            response = self.session.get(form_url, timeout=15)
+            response = http_client.get(form_url, headers=self.headers)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -60,10 +50,8 @@ class FormSubmitter:
             # Find the contact form
             form = self._find_contact_form(soup)
             if not form:
-                return ContactForm(
-                    url=form_url,
-                    error_message="No contact form found on page"
-                )
+                logger.warning(f"No form tag discovered on {form_url}, using email fallback")
+                return self._fallback_to_email(site, message, reason="no_form_on_page")
             
             # Detect CAPTCHA
             captcha_info = self.captcha_solver.detect_captcha_type(soup)
@@ -77,16 +65,24 @@ class FormSubmitter:
                 if captcha_solution:
                     form_data.update(captcha_solution)
                 else:
+                    logger.warning(f"Failed to solve CAPTCHA for {site.domain}")
+                    data_manager.add_log_entry(
+                        "FORM_SUBMISSION", site.domain, "FAILED",
+                        {"details": "captcha_failed", "form_url": form_url}
+                    )
                     return ContactForm(
                         url=form_url,
                         has_captcha=True,
                         captcha_type=captcha_info['type'],
-                        error_message="Failed to solve CAPTCHA"
+                        submitted=False,
+                        error_message="Failed to solve CAPTCHA",
+                        submission_method='form',
+                        email_used=getattr(site, 'email', None)
                     )
             
             # Submit the form
             submit_url = self._get_submit_url(form, form_url)
-            submit_response = self.session.post(submit_url, data=form_data, timeout=15)
+            submit_response = http_client.post(submit_url, data=form_data, headers=self.headers)
             
             # Check submission result
             success = self._check_submission_success(submit_response)
@@ -97,42 +93,105 @@ class FormSubmitter:
                 has_captcha=captcha_info['has_captcha'],
                 captcha_type=captcha_info.get('type'),
                 submitted=success,
-                error_message=None if success else "Form submission failed"
+                error_message=None if success else "Form submission failed",
+                email_used=getattr(site, 'email', None),
+                submission_method='form'
             )
             
             if success:
                 logger.info(f"Successfully submitted contact form for {site.domain}")
-                data_manager.add_log_entry("FORM_SUBMISSION", site.domain, "SUCCESS")
+                data_manager.add_log_entry(
+                    "FORM_SUBMISSION",
+                    site.domain,
+                    "SUCCESS",
+                    {
+                        "method": contact_form.submission_method,
+                        "form_url": form_url,
+                        "email": contact_form.email_used
+                    }
+                )
                 
                 # Also send email if email address is available
                 if hasattr(site, 'email') and site.email:
                     if email_sender.send_outreach_email(site, message, site.email):
                         logger.info(f"📧 Email also sent to {site.domain}")
+                        contact_form.submission_method = 'form_and_email'
+                        data_manager.add_log_entry(
+                            "FORM_SUBMISSION",
+                            site.domain,
+                            "EMAIL_SENT",
+                            {
+                                "method": contact_form.submission_method,
+                                "form_url": form_url,
+                                "email": site.email
+                            }
+                        )
             else:
                 logger.error(f"Failed to submit contact form for {site.domain}")
-                data_manager.add_log_entry("FORM_SUBMISSION", site.domain, "FAILED", {"details": "Submission failed"})
+                data_manager.add_log_entry(
+                    "FORM_SUBMISSION",
+                    site.domain,
+                    "FAILED",
+                    {
+                        "details": "form_submission_failed",
+                        "form_url": form_url,
+                        "email": getattr(site, 'email', None)
+                    }
+                )
             
             return contact_form
             
+        except DeadHostError:
+            logger.warning(f"Contact form host marked dead for {site.domain}, using email fallback")
+            return self._fallback_to_email(site, message, reason="host_unreachable")
         except Exception as e:
             logger.error(f"Error submitting contact form for {site.domain}: {e}")
-            data_manager.add_log_entry("FORM_SUBMISSION", site.domain, "ERROR", {"details": str(e)})
-            
-            # Try to send email as fallback
-            if hasattr(site, 'email') and site.email:
-                if email_sender.send_outreach_email(site, message, site.email):
-                    logger.info(f"📧 Email sent as fallback for {site.domain} after form submission error")
-                    return ContactForm(
-                        url=str(site.contact_form_url) if site.contact_form_url else str(site.url),
-                        submitted=True,
-                        error_message=None
-                    )
-            
-            return ContactForm(
-                url=str(site.contact_form_url) if site.contact_form_url else str(site.url),
-                error_message=str(e)
+            data_manager.add_log_entry(
+                "FORM_SUBMISSION",
+                site.domain,
+                "ERROR",
+                {
+                    "details": str(e),
+                    "form_url": str(site.contact_form_url) if site.contact_form_url else None,
+                    "email": getattr(site, 'email', None)
+                }
             )
-    
+            return self._fallback_to_email(site, message, reason="exception_during_submission")
+
+    def _fallback_to_email(self, site: BusinessSite, message: OutreachMessage, reason: str) -> ContactForm:
+        """Send outreach email as a fallback when form submission is impossible."""
+        email = getattr(site, 'email', None)
+        fallback_url = str(site.contact_form_url) if site.contact_form_url else str(site.url)
+        details = {
+            "method": "email",
+            "reason": reason,
+            "form_url": fallback_url,
+            "email": email
+        }
+
+        if email and email_sender.send_outreach_email(site, message, email):
+            logger.info(f"📧 Email fallback sent to {email} for {site.domain}")
+            data_manager.add_log_entry("FORM_SUBMISSION", site.domain, "EMAIL_SENT", details)
+            return ContactForm(
+                url=fallback_url,
+                submitted=True,
+                error_message=None,
+                email_used=email,
+                submission_method='email'
+            )
+
+        if not email:
+            details["reason"] = f"{reason}_no_email"
+        data_manager.add_log_entry("FORM_SUBMISSION", site.domain, "FAILED", details)
+
+        return ContactForm(
+            url=fallback_url,
+            submitted=False,
+            error_message=reason if email else "No email available for fallback",
+            email_used=email,
+            submission_method='none'
+        )
+
     def _find_contact_form(self, soup: BeautifulSoup) -> Optional[Any]:
         """Find the contact form on the page"""
         # Look for forms with contact-related attributes

@@ -34,7 +34,15 @@ class Config:
     QPS_PER_DOMAIN: int = int(os.getenv("QPS_PER_DOMAIN", "2"))
     DAILY_AUDITS: int = int(os.getenv("DAILY_AUDITS", "150"))
     MAX_SITES_PER_RUN: int = int(os.getenv("MAX_SITES_PER_RUN", "30"))
-    
+
+    # HTTP resilience
+    REQUEST_CONNECT_TIMEOUT: float = float(os.getenv("REQUEST_CONNECT_TIMEOUT", "4.0"))
+    REQUEST_READ_TIMEOUT: float = float(os.getenv("REQUEST_READ_TIMEOUT", "12.0"))
+    HTTP_MAX_RETRIES: int = int(os.getenv("HTTP_MAX_RETRIES", "2"))
+    HTTP_BACKOFF_FACTOR: float = float(os.getenv("HTTP_BACKOFF_FACTOR", "0.5"))
+    DEAD_HOST_CACHE_SECONDS: int = int(os.getenv("DEAD_HOST_CACHE_SECONDS", "1800"))
+    AUDIT_MAX_URL_VARIATIONS: int = int(os.getenv("AUDIT_MAX_URL_VARIATIONS", "4"))
+
     # Target Industries (Rankzen focus)
     TARGET_INDUSTRIES: List[str] = os.getenv("TARGET_INDUSTRIES", "landscaping,real_estate,plumbers,hvac,roofers,lawyers").split(",")
     

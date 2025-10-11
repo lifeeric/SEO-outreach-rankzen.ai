@@ -1,14 +1,14 @@
-import requests
 import time
 import logging
 from typing import Dict, List, Any, Optional
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import re
+import requests
 
 from app.config import config
 from app.models import SEOScore, BusinessSite
-from app.utils import extract_domain, clean_url, is_valid_url
+from app.network_client import http_client, DeadHostError
 # Mock SEO auditor removed for production
 
 logger = logging.getLogger(__name__)
@@ -17,24 +17,14 @@ class SEOAuditor:
     """Performs SEO audits on business websites"""
     
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
+        self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
-        })
-        # Configure retry strategy
-        retry_strategy = requests.adapters.Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        }
     
     def audit_site(self, site: BusinessSite) -> SEOScore:
         """
@@ -50,35 +40,46 @@ class SEOAuditor:
                 url,
                 url.replace('https://', 'http://'),
                 url.replace('http://', 'https://'),
-                f"https://www.{domain}",
-                f"http://www.{domain}",
                 f"https://{domain}",
-                f"http://{domain}"
+                f"http://{domain}",
+                f"https://www.{domain}",
+                f"http://www.{domain}"
             ]
-            
+
+            # De-duplicate candidates and cap attempts to keep audits fast
+            seen = []
+            for candidate in urls_to_try:
+                if candidate not in seen:
+                    seen.append(candidate)
+            urls_to_try = seen[:config.AUDIT_MAX_URL_VARIATIONS]
+
             response = None
             final_url = None
-            
+            load_time = 0.0
+
             for try_url in urls_to_try:
                 try:
                     start_time = time.time()
-                    response = self.session.get(try_url, timeout=10, allow_redirects=True)
+                    response = http_client.get(try_url, allow_redirects=True, headers=self.headers)
                     load_time = time.time() - start_time
-                    
+
                     if response.status_code == 200:
-                        final_url = try_url
-                        break
-                    elif response.status_code in [301, 302, 307, 308]:
-                        # Follow redirects
                         final_url = response.url
                         break
-                    else:
-                        logger.warning(f"Failed to load {try_url}: Status {response.status_code}")
-                        
+                    if response.status_code in [301, 302, 307, 308]:
+                        final_url = response.url
+                        break
+
+                    logger.warning(f"Failed to load {try_url}: Status {response.status_code}")
+
+                except DeadHostError:
+                    logger.warning(f"Host recently unreachable, skipping remaining variations for {domain}")
+                    response = None
+                    break
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"Failed to load {try_url}: {e}")
                     continue
-            
+
             if not response or response.status_code != 200:
                 logger.error(f"Failed to load {domain} after trying multiple URLs")
                 return self._create_failed_score(f"HTTP {response.status_code if response else 'Connection Failed'}")

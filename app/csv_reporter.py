@@ -41,8 +41,8 @@ class CSVReporter:
             'AI Report Subject', 'AI Report Message', 'Report Generated',
             
             # Contact Form Results
-            'Contact Form Found', 'Form URL', 'Submission Status', 'Submission Error',
-            
+            'Contact Form Found', 'Form URL', 'Submission Status', 'Submission Method', 'Submission Error', 'Email Used',
+
             # CAPTCHA Information
             'CAPTCHA Detected', 'CAPTCHA Type', 'CAPTCHA Solved',
             
@@ -77,13 +77,17 @@ class CSVReporter:
         contact_form_found = "No"
         form_url = ""
         submission_status = "Not Attempted"
+        submission_method = "Not Attempted"
         submission_error = ""
+        email_used = getattr(site, 'email', '')
         if contact_form:
             contact_form_found = "Yes"
             form_url = str(contact_form.url) if contact_form.url else ""
             submission_status = "SUCCESS" if contact_form.submitted else "FAILED"
+            submission_method = contact_form.submission_method or submission_status
             submission_error = contact_form.error_message or ""
-        
+            email_used = contact_form.email_used or email_used
+
         # Prepare CAPTCHA data
         captcha_detected = "No"
         captcha_type = ""
@@ -127,7 +131,9 @@ class CSVReporter:
             'Contact Form Found': contact_form_found,
             'Form URL': form_url,
             'Submission Status': submission_status,
+            'Submission Method': submission_method,
             'Submission Error': submission_error,
+            'Email Used': email_used,
             
             # CAPTCHA Information
             'CAPTCHA Detected': captcha_detected,

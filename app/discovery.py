@@ -1,4 +1,3 @@
-import requests
 import logging
 import time
 import random
@@ -6,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, quote_plus
 from app.models import BusinessSite
 from app.config import config
+from app.network_client import http_client, DeadHostError
 # Mock APIs removed for production - using fallback methods instead
 
 logger = logging.getLogger(__name__)
@@ -141,11 +141,10 @@ class BusinessDiscovery:
                 'hl': 'en'
             }
             
-            response = requests.post(
+            response = http_client.post(
                 'https://google.serper.dev/search',
                 headers=headers,
                 json=data,
-                timeout=30
             )
             
             if response.status_code == 200:
@@ -170,6 +169,9 @@ class BusinessDiscovery:
                 logger.warning(f"⚠️ Serper API error: {response.status_code} - {response.text}")
                 return []
                 
+        except DeadHostError as e:
+            logger.warning(f"⚠️ Serper host temporarily blocked: {e.domain}")
+            return []
         except Exception as e:
             logger.warning(f"⚠️ Serper API error: {e}")
             return []
@@ -178,14 +180,7 @@ class BusinessDiscovery:
         """Quick check if a site is accessible before adding to audit list"""
         try:
             # Try a quick HEAD request first (faster than GET)
-            response = requests.head(url, timeout=5, allow_redirects=True)
-            if response.status_code == 200:
-                return True
-            
-            # If HEAD fails, try GET
-            response = requests.get(url, timeout=5, allow_redirects=True)
-            return response.status_code == 200
-            
+            return http_client.is_reachable(url)
         except Exception:
             return False
     
@@ -437,7 +432,11 @@ class BusinessDiscovery:
             # Rate limiting
             self.rate_limiter.wait_for_domain(domain)
             
-            response = requests.get(url_str, timeout=10, headers={
+            if not http_client.is_reachable(url_str):
+                logger.info(f"⏭️ Skipping unreachable site when searching for email: {url_str}")
+                return []
+
+            response = http_client.get(url_str, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             })
             
@@ -460,6 +459,9 @@ class BusinessDiscovery:
             # Return unique emails
             return list(set(business_emails))[:3]  # Limit to 3 email addresses
             
+        except DeadHostError:
+            logger.warning(f"⏭️ Domain recently unreachable when finding emails: {url}")
+            return []
         except Exception as e:
             logger.error(f"❌ Error finding email addresses for {url}: {e}")
             return []
@@ -474,7 +476,11 @@ class BusinessDiscovery:
             # Rate limiting
             self.rate_limiter.wait_for_domain(domain)
             
-            response = requests.get(url_str, timeout=10, headers={
+            if not http_client.is_reachable(url_str):
+                logger.info(f"⏭️ Skipping unreachable site when searching for contact form: {url_str}")
+                return []
+
+            response = http_client.get(url_str, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             })
             
@@ -523,6 +529,9 @@ class BusinessDiscovery:
             
             return contact_urls[:3]  # Limit to 3 contact forms
             
+        except DeadHostError:
+            logger.warning(f"⏭️ Domain recently unreachable when finding contact forms: {url}")
+            return []
         except Exception as e:
             logger.error(f"❌ Error finding contact forms for {url}: {e}")
             return []

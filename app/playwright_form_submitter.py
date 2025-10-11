@@ -10,6 +10,7 @@ from app.config import config
 from app.models import ContactForm, OutreachMessage, BusinessSite
 from app.utils import extract_domain, clean_url, is_valid_url, data_manager
 from app.captcha_solver import CaptchaSolver
+from app.network_client import http_client, DeadHostError
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +85,30 @@ class PlaywrightFormSubmitter:
             logger.warning(f"No contact form URL for {site.domain}")
             return ContactForm(
                 url=str(site.url),
-                error_message="No contact form found"
+                error_message="No contact form found",
+                submission_method='form',
+                email_used=getattr(site, 'email', None)
             )
         
         try:
             form_url = str(site.contact_form_url)
             logger.info(f"🌐 Navigating to {form_url} with Playwright")
+
+            if not http_client.is_reachable(form_url):
+                logger.warning(f"Contact form unreachable for {site.domain} before Playwright navigation")
+                data_manager.add_log_entry(
+                    "FORM_SUBMISSION",
+                    site.domain,
+                    "FAILED",
+                    {"details": "playwright_unreachable", "form_url": form_url}
+                )
+                return ContactForm(
+                    url=form_url,
+                    submitted=False,
+                    error_message="Form URL unreachable",
+                    submission_method='form',
+                    email_used=getattr(site, 'email', None)
+                )
             
             # Navigate to the page
             await self.page.goto(form_url, wait_until='networkidle', timeout=30000)
@@ -104,10 +123,19 @@ class PlaywrightFormSubmitter:
                 logger.info(f"🔍 CAPTCHA detected on {site.domain}")
                 captcha_solved = await self._solve_captcha()
                 if not captcha_solved:
+                    data_manager.add_log_entry(
+                        "FORM_SUBMISSION",
+                        site.domain,
+                        "FAILED",
+                        {"details": "playwright_captcha_failed", "form_url": form_url}
+                    )
                     return ContactForm(
                         url=form_url,
                         has_captcha=True,
-                        error_message="Failed to solve CAPTCHA"
+                        submitted=False,
+                        error_message="Failed to solve CAPTCHA",
+                        submission_method='form',
+                        email_used=getattr(site, 'email', None)
                     )
             
             # Find and fill the contact form
@@ -125,25 +153,64 @@ class PlaywrightFormSubmitter:
             if submission_success:
                 logger.info(f"✅ Successfully submitted contact form for {site.domain}")
                 # data_manager.add_log("FORM_SUBMISSION", site.domain, "SUCCESS")  # Commented out due to missing method
+                data_manager.add_log_entry(
+                    "FORM_SUBMISSION",
+                    site.domain,
+                    "SUCCESS",
+                    {"details": "playwright_form", "form_url": form_url}
+                )
                 return ContactForm(
                     url=form_url,
                     submitted=True,
-                    has_captcha=captcha_detected
+                    has_captcha=captcha_detected,
+                    submission_method='form',
+                    email_used=getattr(site, 'email', None)
                 )
             else:
                 logger.warning(f"⚠️ Form submission may have failed for {site.domain}")
+                data_manager.add_log_entry(
+                    "FORM_SUBMISSION",
+                    site.domain,
+                    "FAILED",
+                    {"details": "playwright_submit_failed", "form_url": form_url}
+                )
                 return ContactForm(
                     url=form_url,
                     submitted=False,
-                    error_message="Form submission failed"
+                    error_message="Form submission failed",
+                    submission_method='form',
+                    email_used=getattr(site, 'email', None)
                 )
                 
-        except Exception as e:
-            logger.error(f"❌ Error submitting contact form for {site.domain}: {e}")
-            # data_manager.add_log("FORM_SUBMISSION", site.domain, "ERROR", str(e))  # Commented out due to missing method
+        except DeadHostError:
+            logger.warning(f"Playwright contact form host marked dead for {site.domain}")
+            data_manager.add_log_entry(
+                "FORM_SUBMISSION",
+                site.domain,
+                "FAILED",
+                {"details": "playwright_dead_host", "form_url": str(site.contact_form_url)}
+            )
             return ContactForm(
                 url=str(site.contact_form_url) if site.contact_form_url else str(site.url),
-                error_message=str(e)
+                submitted=False,
+                error_message="Host unreachable",
+                submission_method='form',
+                email_used=getattr(site, 'email', None)
+            )
+        except Exception as e:
+            logger.error(f"❌ Error submitting contact form for {site.domain}: {e}")
+            data_manager.add_log_entry(
+                "FORM_SUBMISSION",
+                site.domain,
+                "ERROR",
+                {"details": str(e), "form_url": str(site.contact_form_url)}
+            )
+            return ContactForm(
+                url=str(site.contact_form_url) if site.contact_form_url else str(site.url),
+                submitted=False,
+                error_message=str(e),
+                submission_method='form',
+                email_used=getattr(site, 'email', None)
             )
     
     async def _detect_captcha(self) -> bool:

@@ -95,21 +95,27 @@ class SEOOutreachOrchestrator:
             # Step 3: Generate AI reports and submit outreach
             logger.info("🤖 Step 3: Generating AI reports and submitting outreach...")
             
+            outreach_messages_map = {}
+            contact_forms_map = {}
+
             for site in audited_sites:
+                contact_form = None
                 try:
                     if not site.seo_score or site.seo_score.overall_score == 0:
                         logger.warning(f"⏭️  Skipping {site.domain} - no valid SEO score")
                         results['skipped_sites'] += 1
                         continue
-                    
+
                     # Generate AI-powered plain-English report
                     logger.info(f"🤖 Generating AI report for {site.domain}")
                     outreach_message = self.reporter.generate_outreach_message(site, site.seo_score)
-                    
+                    outreach_messages_map[site.domain] = outreach_message
+
                     # Submit outreach via contact form or email
                     logger.info(f"📝 Submitting outreach for {site.domain}")
                     contact_form = self.form_submitter.submit_contact_form(site, outreach_message)
-                    
+                    contact_forms_map[site.domain] = contact_form
+
                     if contact_form.submitted:
                         # Mark as sent and add to blacklist
                         site.outreach_sent = True
@@ -137,16 +143,8 @@ class SEOOutreachOrchestrator:
                 
                 # Collect all data for CSV generation
                 seo_scores = {site.domain: site.seo_score for site in audited_sites if site.seo_score}
-                outreach_messages = {}
-                contact_forms = {}
-                
-                # We'll need to collect outreach messages and contact forms from the process
-                # For now, we'll create placeholder data
-                for site in audited_sites:
-                    if hasattr(site, 'outreach_message'):
-                        outreach_messages[site.domain] = site.outreach_message
-                    if hasattr(site, 'contact_form'):
-                        contact_forms[site.domain] = site.contact_form
+                outreach_messages = outreach_messages_map
+                contact_forms = contact_forms_map
                 
                 # Add each site to the CSV log
                 for site in audited_sites:

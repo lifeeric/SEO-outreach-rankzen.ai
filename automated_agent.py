@@ -124,12 +124,15 @@ class AutomatedOutreachAgent:
             # Find contact forms
             contact_forms = self.discovery.find_contact_forms(str(site.url))
             contact_form_found = len(contact_forms) > 0
-            
+            contact_form = None
+            if contact_form_found:
+                site.contact_form_url = contact_forms[0]
+
             # Find email addresses
             emails = self.discovery.find_email_addresses(str(site.url))
             if emails:
                 site.email = emails[0]  # Use the first found email
-            
+
             # Submit outreach if contact form found
             outreach_sent = False
             if contact_form_found:
@@ -175,10 +178,11 @@ class AutomatedOutreachAgent:
                     logger.error(f"❌ Error submitting outreach to {site.domain}: {e}")
             else:
                 logger.info(f"⚠️ No contact form found for {site.domain}")
-            
+                contact_form = self.form_submitter.submit_contact_form(site, outreach_message)
+                outreach_sent = contact_form.submitted
+
             # Add to CSV log
-            csv_reporter.add_site_log(site, seo_score, outreach_message, 
-                                     contact_form if contact_form_found else None)
+            csv_reporter.add_site_log(site, seo_score, outreach_message, contact_form)
             
             # Add to blacklist to prevent duplicate outreach
             data_manager.add_to_blacklist(site.domain)
