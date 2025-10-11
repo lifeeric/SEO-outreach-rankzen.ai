@@ -162,7 +162,7 @@ class PlaywrightFormSubmitter:
                     "SUCCESS",
                     {"details": "playwright_form", "form_url": form_url}
                 )
-                email_sender.log_form_submission(site, message, form_url, self._last_form_data, submission_method='playwright-form', status='submitted')
+                email_sender.log_form_submission(site, message, form_url, self._last_form_data, submission_method='playwright-form', status='form')
                 return ContactForm(
                     url=form_url,
                     submitted=True,
@@ -415,19 +415,21 @@ class PlaywrightFormSubmitter:
                                 field_name = await field.get_attribute('name') or await field.get_attribute('id') or 'unknown'
                                 field_placeholder = await field.get_attribute('placeholder') or 'none'
                                 logger.info(f"🎯 Found {field_type} field: name='{field_name}', placeholder='{field_placeholder}'")
-                                
+
                                 # Clear the field first
                                 await field.click()
                                 await field.fill('')
-                                
+
                                 # Fill with appropriate value
                                 value = field_values[field_type]
                                 await field.fill(value)
-                                
+
                                 logger.info(f"✅ Filled {field_type} field")
+                                submitted_data[field_name] = value
+                                submitted_data.setdefault(field_type, value)
                                 fields_filled += 1
                                 break  # Move to next field type
-                                
+
                     except Exception as e:
                         logger.debug(f"Could not fill {field_type} field: {e}")
                         continue

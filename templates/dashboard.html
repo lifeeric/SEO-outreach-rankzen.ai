@@ -44,6 +44,13 @@
     font-weight: 700;
     color: var(--brand);
   }
+  .metric-subtext {
+    margin-top: 0.25rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
 </style>
 
 <div class="card">
@@ -66,20 +73,13 @@
       <div class="metric-value" id="total-discovered">0</div>
     </div>
     <div class="metric-card">
-      <strong>Total Audited</strong>
-      <div class="metric-value" id="total-audited">0</div>
+      <strong>Form Contacts Found</strong>
+      <div class="metric-value" id="forms-found">0</div>
     </div>
     <div class="metric-card">
-      <strong>Outreach Sent</strong>
-      <div class="metric-value" id="total-outreach">0</div>
-    </div>
-    <div class="metric-card">
-      <strong>Daily Audits</strong>
-      <div class="metric-value" id="daily-audits">0</div>
-    </div>
-    <div class="metric-card">
-      <strong>Daily Outreach</strong>
-      <div class="metric-value" id="daily-outreach">0</div>
+      <strong>Daily Activity</strong>
+      <div class="metric-value" id="daily-summary">0 / 0</div>
+      <div class="metric-subtext">Audits / Outreach</div>
     </div>
     <div class="metric-card">
       <strong>Uptime (hrs)</strong>
@@ -95,11 +95,11 @@
   </div>
   <div class="stat-card">
     <div class="stat-number" id="audited-leads">0</div>
-    <div class="stat-label">Audited</div>
+    <div class="stat-label">Leads Audited</div>
   </div>
   <div class="stat-card">
     <div class="stat-number" id="sent-leads">0</div>
-    <div class="stat-label">Outreach Sent</div>
+    <div class="stat-label">Leads Contacted</div>
   </div>
   <div class="stat-card">
     <div class="stat-number" id="responded-leads">0</div>
@@ -147,12 +147,13 @@ function updateDashboard() {
       
       // Update bot stats
       if (data.bot_stats) {
-        document.getElementById('total-discovered').textContent = data.bot_stats.total_sites_discovered;
-        document.getElementById('total-audited').textContent = data.bot_stats.total_sites_audited;
-        document.getElementById('total-outreach').textContent = data.bot_stats.total_outreach_sent;
-        document.getElementById('daily-audits').textContent = data.bot_stats.daily_audits;
-        document.getElementById('daily-outreach').textContent = data.bot_stats.daily_outreach;
-        document.getElementById('uptime').textContent = data.bot_stats.uptime_hours.toFixed(1);
+        document.getElementById('total-discovered').textContent = data.bot_stats.total_sites_discovered ?? 0;
+        document.getElementById('forms-found').textContent = data.bot_stats.total_contact_forms_found ?? 0;
+        const dailyAudits = data.bot_stats.daily_audits ?? 0;
+        const dailyOutreach = data.bot_stats.daily_outreach ?? 0;
+        document.getElementById('daily-summary').textContent = `${dailyAudits} / ${dailyOutreach}`;
+        const uptimeHours = Number(data.bot_stats.uptime_hours || 0);
+        document.getElementById('uptime').textContent = uptimeHours.toFixed(1);
       }
       
       // Update activity log

@@ -1,6 +1,7 @@
 import logging
 import time
 import random
+import math
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, quote_plus
 from app.models import BusinessSite
@@ -47,19 +48,30 @@ class BusinessDiscovery:
         # Always try to discover businesses (with fallback if Serper API fails)
         logger.info(f"🔑 Using Serper API key: {self.serper_api_key[:10]}...")
         
-        # If specific industry is requested, use all max_sites for that industry
+        # Build industry list (allowing runtime-configured values to be empty)
         if industry:
-            sites_per_industry = max_sites
             target_industries = [industry]
         else:
-            sites_per_industry = max(1, max_sites // len(config.TARGET_INDUSTRIES))
-            target_industries = config.TARGET_INDUSTRIES
-        
+            configured = [item.strip() for item in getattr(config, 'TARGET_INDUSTRIES', []) if isinstance(item, str) and item.strip()]
+            target_industries = configured or list(config.INDUSTRY_SEARCH_TERMS.keys())
+
+            # Provide a generic fallback to avoid empty loops
+            if not target_industries:
+                target_industries = ['local business']
+
+        # Remove duplicates while preserving order
+        target_industries = list(dict.fromkeys(target_industries))
+
+        sites_per_industry = max_sites if len(target_industries) <= 1 else max(1, math.ceil(max_sites / len(target_industries)))
+
+        target_regions = self._get_target_regions()
+
         for target_industry in target_industries:
             logger.info(f"🎯 Discovering {target_industry} businesses")
             industry_sites = self._discover_industry_businesses(
                 industry=target_industry,
-                max_sites=sites_per_industry
+                max_sites=sites_per_industry,
+                regions=target_regions
             )
             discovered_sites.extend(industry_sites)
             
@@ -70,8 +82,26 @@ class BusinessDiscovery:
         
         logger.info(f"✅ Discovered {len(discovered_sites)} business sites")
         return discovered_sites[:max_sites]
+
+    def _get_target_regions(self) -> List[Optional[str]]:
+        """Resolve regions to use for discovery, allowing empty settings."""
+        configured = [item.strip() for item in getattr(config, 'TARGET_REGIONS', []) if isinstance(item, str) and item.strip()]
+        regions: List[Optional[str]] = configured.copy() if configured else []
+
+        if not regions:
+            fallback = [item.strip() for item in getattr(config, 'TARGET_REGIONS_TIER2', []) if isinstance(item, str) and item.strip()]
+            regions = fallback.copy()
+
+        if not regions:
+            regions = ['United States']
+
+        # Add a regionless option to broaden discovery when desired
+        if not any(region is None or (isinstance(region, str) and not region.strip()) for region in regions):
+            regions.append(None)
+
+        return regions
     
-    def _discover_industry_businesses(self, industry: str, max_sites: int = 5) -> List[BusinessSite]:
+    def _discover_industry_businesses(self, industry: str, max_sites: int = 5, regions: Optional[List[Optional[str]]] = None) -> List[BusinessSite]:
         """Discover businesses for a specific industry"""
         logger.info(f"🔍 _discover_industry_businesses: industry={industry}, max_sites={max_sites}")
         
@@ -79,10 +109,12 @@ class BusinessDiscovery:
         logger.info(f"🔍 Search terms: {search_terms}")
         
         discovered_sites = []
+        active_regions = regions or self._get_target_regions()
         
         for search_term in search_terms:
-            for region in config.TARGET_REGIONS:
-                logger.info(f"🔍 Processing: search_term={search_term}, region={region}")
+            for region in active_regions:
+                region_label = region if region else 'global'
+                logger.info(f"🔍 Processing: search_term={search_term}, region={region_label}")
                 
                 # Try Serper API first
                 businesses = self._search_businesses(search_term, region, industry)
@@ -119,14 +151,19 @@ class BusinessDiscovery:
         logger.info(f"🔍 _discover_industry_businesses returning {len(discovered_sites)} sites")
         return discovered_sites[:max_sites]
     
-    def _search_businesses(self, search_term: str, region: str, industry: str) -> List[Dict[str, str]]:
+    def _search_businesses(self, search_term: str, region: Optional[str], industry: str) -> List[Dict[str, str]]:
         """Search for businesses using Serper API"""
         try:
             # Build search query
-            query = f'"{search_term}" "{region}" "contact us" "about us" -site:google.com -site:yelp.com -site:facebook.com -site:yellowpages.com -site:angieslist.com -site:homeadvisor.com -site:thumbtack.com -site:nextdoor.com'
+            region_fragment = f' "{region}"' if region else ''
+            query = (
+                f'"{search_term}"{region_fragment} "contact us" "about us" '
+                '-site:google.com -site:yelp.com -site:facebook.com -site:yellowpages.com '
+                '-site:angieslist.com -site:homeadvisor.com -site:thumbtack.com -site:nextdoor.com'
+            )
             
             logger.info(f"🔍 Searching: {query}")
-            logger.info(f"🔍 Search term: {search_term}, Region: {region}, Industry: {industry}")
+            logger.info(f"🔍 Search term: {search_term}, Region: {region or 'global'}, Industry: {industry}")
             
             # Make API request
             headers = {
@@ -239,9 +276,10 @@ class BusinessDiscovery:
         
         return sites
     
-    def _generate_sample_businesses(self, industry: str, region: str, max_sites: int = 5) -> List[BusinessSite]:
+    def _generate_sample_businesses(self, industry: str, region: Optional[str], max_sites: int = 5) -> List[BusinessSite]:
         """Generate sample businesses for testing when Serper API is not available"""
-        logger.info(f"🧪 Generating sample businesses for {industry} in {region}")
+        region_label = region or 'Global'
+        logger.info(f"🧪 Generating sample businesses for {industry} in {region_label}")
         
         sample_businesses = {
             "landscaping": [
@@ -302,16 +340,17 @@ class BusinessDiscovery:
                 domain=business['domain'],
                 business_name=business['name'],
                 business_type=industry,
-                region=region
+                region=region or 'Global'
             )
             businesses.append(business_site)
             logger.info(f"🧪 Generated sample business: {business['name']} ({business['domain']})")
         
         return businesses
     
-    def _generate_realistic_sample_businesses(self, industry: str, region: str, max_sites: int = 5) -> List[BusinessSite]:
+    def _generate_realistic_sample_businesses(self, industry: str, region: Optional[str], max_sites: int = 5) -> List[BusinessSite]:
         """Generate realistic sample businesses for a given industry and region"""
-        logger.info(f"🧪 Generating realistic sample businesses for {industry} in {region}")
+        region_label = region or 'Global'
+        logger.info(f"🧪 Generating realistic sample businesses for {industry} in {region_label}")
         
         realistic_samples = {
             "landscaping": [
@@ -393,7 +432,7 @@ class BusinessDiscovery:
                 domain=business['domain'],
                 business_name=business['name'],
                 business_type=industry,
-                region=region
+                region=region or 'Global'
             )
             businesses.append(business_site)
             logger.info(f"🧪 Generated low-score sample business: {business['name']} ({business['domain']})")
@@ -405,7 +444,7 @@ class BusinessDiscovery:
                 domain=business['domain'],
                 business_name=business['name'],
                 business_type=industry,
-                region=region
+                region=region or 'Global'
             )
             businesses.append(business_site)
             logger.info(f"🧪 Generated realistic sample business: {business['name']} ({business['domain']})")

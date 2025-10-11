@@ -235,19 +235,23 @@ class EmailSender:
                             submission_method = str(raw_context.get('submission_method', '')).lower()
 
                         # Determine outreach/contact flags
-                        success_states = {'sent', 'submitted'}
+                        success_states = {'sent', 'submitted', 'success', 'form'}
+                        status_normalized = status.lower() if isinstance(status, str) else ''
                         if campaign_type == 'form':
-                            if status.lower() in success_states and 'form' in submission_method:
+                            if status_normalized in success_states and 'form' in submission_method:
                                 lead.contact_form_found = True
                                 lead.outreach_sent = True
                                 lead.status = 'sent'
-                            elif status.lower() in {'failed', 'error'} and not lead.outreach_sent:
+                            elif status_normalized in {'failed', 'error'} and not lead.outreach_sent:
                                 lead.contact_form_found = False
                         else:
-                            if status.lower() == 'sent':
+                            if status_normalized == 'sent':
                                 lead.outreach_sent = True
                                 if lead.status != 'responded':
                                     lead.status = 'sent'
+                            elif status_normalized in {'responded', 'replied'}:
+                                lead.status = 'responded'
+                                lead.outreach_sent = True
 
                         lead.updated_at = datetime.utcnow()
 
@@ -462,21 +466,39 @@ class EmailSender:
                              status: str = "submitted") -> None:
         """Record a contact form submission in the outreach log."""
         try:
+            status_value = status or "form"
             context_payload = {
                 "form_url": form_url,
                 "form_fields": form_fields or {},
                 "submission_method": submission_method,
-                "status": status
+                "status": status_value
             }
             html_body = message.message.replace('\n', '<br>') if message.message else ''
             text_body = self._html_to_text(html_body or message.message)
-            recipient = form_url or (site.email if hasattr(site, 'email') else '')
+
+            recipient = None
+            if isinstance(form_fields, dict):
+                for key, value in form_fields.items():
+                    if isinstance(key, str) and 'email' in key.lower() and isinstance(value, str) and value.strip():
+                        recipient = value.strip()
+                        break
+                if not recipient:
+                    email_value = form_fields.get('email') if isinstance(form_fields.get('email'), str) else None
+                    if email_value and email_value.strip():
+                        recipient = email_value.strip()
+
+            if not recipient:
+                recipient = getattr(site, 'email', None) if hasattr(site, 'email') else None
+            if not recipient:
+                recipient = form_url
+
+            context_payload["email_used"] = recipient
             self._record_email_in_db(
                 site,
                 recipient,
                 "form",
                 None,
-                status,
+                status_value,
                 subject=message.subject,
                 body_html=html_body,
                 body_text=text_body,

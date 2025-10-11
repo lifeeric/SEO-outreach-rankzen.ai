@@ -307,10 +307,17 @@ def load_settings_into_config():
             config.RESEND_API_KEY = settings.decrypt_value(settings.resend_api_key)
         if getattr(settings, 'resend_webhook_secret', None) and settings.resend_webhook_secret.strip():
             config.RESEND_WEBHOOK_SECRET = settings.decrypt_value(settings.resend_webhook_secret)
-        if settings.target_industries and settings.target_industries.strip():
-            config.TARGET_INDUSTRIES = [x.strip() for x in settings.target_industries.split(',')]
-        if settings.target_regions and settings.target_regions.strip():
-            config.TARGET_REGIONS = [x.strip() for x in settings.target_regions.split(',')]
+        raw_industries = (settings.target_industries or '').strip()
+        if raw_industries:
+            config.TARGET_INDUSTRIES = [x.strip() for x in raw_industries.split(',') if x.strip()]
+        else:
+            config.TARGET_INDUSTRIES = []
+
+        raw_regions = (settings.target_regions or '').strip()
+        if raw_regions:
+            config.TARGET_REGIONS = [x.strip() for x in raw_regions.split(',') if x.strip()]
+        else:
+            config.TARGET_REGIONS = []
         if settings.outreach_templates and settings.outreach_templates.strip():
             # Try to parse JSON templates
             try:
@@ -811,8 +818,8 @@ def settings():
         form.stripe_product_key.data = settings_obj.decrypt_value(settings_obj.stripe_product_key)
         form.resend_api_key.data = settings_obj.decrypt_value(settings_obj.resend_api_key)
         form.resend_webhook_secret.data = settings_obj.decrypt_value(settings_obj.resend_webhook_secret)
-        form.target_industries.data = settings_obj.target_industries
-        form.target_regions.data = settings_obj.target_regions
+        form.target_industries.data = settings_obj.target_industries or ''
+        form.target_regions.data = settings_obj.target_regions or ''
         form.message_template.data = settings_obj.message_template
         
         try:
@@ -833,8 +840,10 @@ def settings():
         settings_obj.stripe_product_key = settings_obj.encrypt_value(form.stripe_product_key.data)
         settings_obj.resend_api_key = settings_obj.encrypt_value(form.resend_api_key.data)
         settings_obj.resend_webhook_secret = settings_obj.encrypt_value(form.resend_webhook_secret.data)
-        settings_obj.target_industries = form.target_industries.data
-        settings_obj.target_regions = form.target_regions.data
+        industries_value = (form.target_industries.data or '').strip()
+        regions_value = (form.target_regions.data or '').strip()
+        settings_obj.target_industries = industries_value or None
+        settings_obj.target_regions = regions_value or None
         settings_obj.message_template = form.message_template.data
         settings_obj.outreach_templates = form.outreach_templates.data
             
@@ -1023,14 +1032,35 @@ def resend_webhook():
                 outreach.body_html = outreach.body_html or payload_data.get('html')
                 outreach.body_text = outreach.body_text or payload_data.get('text')
                 outreach.context = outreach.context or json.dumps(payload_data)
-                outreach.sent_at = occurred_at
+                event_lower = (event_type or '').lower()
+                status_lower = (status or '').lower()
 
-                if event_type and 'deliver' in event_type.lower():
-                    outreach.status = 'delivered'
-                elif event_type and 'bounce' in event_type.lower():
-                    outreach.status = 'bounced'
-                elif event_type and ('complain' in event_type.lower() or 'spam' in event_type.lower()):
-                    outreach.status = 'complained'
+                should_update_sent_at = outreach.sent_at is None
+                if event_lower and any(token in event_lower for token in ['deliver', 'sent']):
+                    should_update_sent_at = True
+                if should_update_sent_at:
+                    outreach.sent_at = occurred_at
+
+                if event_lower:
+                    if 'deliver' in event_lower:
+                        outreach.status = 'delivered'
+                    elif 'bounce' in event_lower:
+                        outreach.status = 'bounced'
+                    elif 'complain' in event_lower or 'spam' in event_lower:
+                        outreach.status = 'complained'
+                    elif 'reply' in event_lower:
+                        outreach.status = 'responded'
+
+                if status_lower:
+                    if status_lower == 'replied' or 'reply' in status_lower:
+                        outreach.status = 'responded'
+
+                if outreach.status == 'responded' and outreach.domain:
+                    lead = Lead.query.filter_by(domain=outreach.domain).first()
+                    if lead:
+                        lead.status = 'responded'
+                        lead.outreach_sent = True
+                        lead.updated_at = datetime.utcnow()
 
         # Handle suppressions for hard bounces/complaints
         if event_type and any(token in event_type.lower() for token in ['bounce', 'complain', 'spam']) and recipient:
