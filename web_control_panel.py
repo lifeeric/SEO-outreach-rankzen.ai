@@ -369,6 +369,13 @@ def sync_leads_from_csv():
             db.session.commit()
             if synced_count > 0 or updated_count > 0:
                 log_activity('INFO', f'Synced {synced_count} new leads and updated {updated_count} existing leads from CSV (total rows: {len(df)})', 'sync')
+        else:
+            log_activity('WARNING', 'CSV file not found for lead sync', 'sync')
+
+    except Exception as e:
+        logger.error(f"Error syncing leads from CSV: {e}")
+        log_activity('ERROR', f'CSV sync failed: {e}', 'sync')
+
 
 def ensure_email_outreach_columns():
     """Ensure the EmailOutreach table has the latest columns used by the app."""
@@ -390,14 +397,12 @@ def ensure_email_outreach_columns():
             with db.engine.begin() as connection:
                 for ddl in ddl_statements:
                     connection.execute(text(ddl))
-            logger.info("Updated email_outreach table with new columns: %s", ', '.join(stmt.split()[-1] for stmt in ddl_statements))
+            logger.info(
+                "Updated email_outreach table with new columns: %s",
+                ', '.join(stmt.split()[-1] for stmt in ddl_statements)
+            )
     except Exception as exc:
         logger.error(f"Failed to ensure email_outreach columns: {exc}")
-        else:
-            log_activity('WARNING', 'CSV file not found for lead sync', 'sync')
-    except Exception as e:
-        logger.error(f"Error syncing leads from CSV: {e}")
-        log_activity('ERROR', f'CSV sync failed: {e}', 'sync')
 
 def csv_sync_worker():
     """Background worker for periodically syncing CSV data to database"""
