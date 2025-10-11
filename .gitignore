@@ -54,6 +54,7 @@ data/
 *.json
 *.log
 *.txt
+!requirements.txt
 
 # Database files
 instance/

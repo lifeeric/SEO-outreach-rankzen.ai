@@ -11,6 +11,7 @@ from app.models import ContactForm, OutreachMessage, BusinessSite
 from app.utils import extract_domain, clean_url, is_valid_url, data_manager
 from app.captcha_solver import CaptchaSolver
 from app.network_client import http_client, DeadHostError
+from app.email_sender import email_sender
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class PlaywrightFormSubmitter:
         self.browser = None
         self.context = None
         self.page = None
+        self._last_form_data: Dict[str, Any] = {}
         
     async def initialize(self):
         """Initialize Playwright browser"""
@@ -135,7 +137,8 @@ class PlaywrightFormSubmitter:
                         submitted=False,
                         error_message="Failed to solve CAPTCHA",
                         submission_method='form',
-                        email_used=getattr(site, 'email', None)
+                        email_used=getattr(site, 'email', None),
+                        form_fields=self._last_form_data
                     )
             
             # Find and fill the contact form
@@ -159,12 +162,14 @@ class PlaywrightFormSubmitter:
                     "SUCCESS",
                     {"details": "playwright_form", "form_url": form_url}
                 )
+                email_sender.log_form_submission(site, message, form_url, self._last_form_data, submission_method='playwright-form', status='submitted')
                 return ContactForm(
                     url=form_url,
                     submitted=True,
                     has_captcha=captcha_detected,
                     submission_method='form',
-                    email_used=getattr(site, 'email', None)
+                    email_used=getattr(site, 'email', None),
+                    form_fields=self._last_form_data
                 )
             else:
                 logger.warning(f"⚠️ Form submission may have failed for {site.domain}")
@@ -179,7 +184,8 @@ class PlaywrightFormSubmitter:
                     submitted=False,
                     error_message="Form submission failed",
                     submission_method='form',
-                    email_used=getattr(site, 'email', None)
+                    email_used=getattr(site, 'email', None),
+                    form_fields=self._last_form_data
                 )
                 
         except DeadHostError:
@@ -195,7 +201,8 @@ class PlaywrightFormSubmitter:
                 submitted=False,
                 error_message="Host unreachable",
                 submission_method='form',
-                email_used=getattr(site, 'email', None)
+                email_used=getattr(site, 'email', None),
+                form_fields=self._last_form_data
             )
         except Exception as e:
             logger.error(f"❌ Error submitting contact form for {site.domain}: {e}")
@@ -210,7 +217,8 @@ class PlaywrightFormSubmitter:
                 submitted=False,
                 error_message=str(e),
                 submission_method='form',
-                email_used=getattr(site, 'email', None)
+                email_used=getattr(site, 'email', None),
+                form_fields=self._last_form_data
             )
     
     async def _detect_captcha(self) -> bool:
@@ -344,7 +352,9 @@ class PlaywrightFormSubmitter:
                 'message': message.message
             }
             
+            submitted_data: Dict[str, Any] = {}
             fields_filled = 0
+            self._last_form_data = submitted_data
             
             # Debug: List all form elements on the page
             all_inputs = await self.page.query_selector_all('input')
@@ -423,6 +433,7 @@ class PlaywrightFormSubmitter:
                         continue
             
             logger.info(f"📝 Filled {fields_filled} form fields")
+            self._last_form_data = submitted_data
             return fields_filled > 0
             
         except Exception as e:

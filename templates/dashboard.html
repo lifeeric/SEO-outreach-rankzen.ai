@@ -4,6 +4,90 @@
 {% block header %}Dashboard{% endblock %}
 
 {% block content %}
+<style>
+  .bot-control-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .bot-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+  }
+  .bot-actions button {
+    margin-left: 0.5rem;
+  }
+  .bot-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .metric-card {
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 1rem;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  }
+  .metric-card strong {
+    display: block;
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.4rem;
+  }
+  .metric-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--brand);
+  }
+</style>
+
+<div class="card">
+  <div class="bot-control-header">
+    <div>
+      <h3 style="margin-bottom: 0.5rem;">🤖 Bot Control</h3>
+      <div class="bot-status-pill">
+        <span>Status:</span>
+        <span id="bot-status" style="color: var(--error);">Stopped</span>
+      </div>
+    </div>
+    <div class="bot-actions">
+      <button id="start-bot-btn" onclick="startBot()" class="btn">▶️ Start Bot</button>
+      <button id="stop-bot-btn" onclick="stopBot()" class="btn btn-danger" style="display: none;">⏹️ Stop Bot</button>
+    </div>
+  </div>
+  <div class="bot-metrics-grid">
+    <div class="metric-card">
+      <strong>Total Discovered</strong>
+      <div class="metric-value" id="total-discovered">0</div>
+    </div>
+    <div class="metric-card">
+      <strong>Total Audited</strong>
+      <div class="metric-value" id="total-audited">0</div>
+    </div>
+    <div class="metric-card">
+      <strong>Outreach Sent</strong>
+      <div class="metric-value" id="total-outreach">0</div>
+    </div>
+    <div class="metric-card">
+      <strong>Daily Audits</strong>
+      <div class="metric-value" id="daily-audits">0</div>
+    </div>
+    <div class="metric-card">
+      <strong>Daily Outreach</strong>
+      <div class="metric-value" id="daily-outreach">0</div>
+    </div>
+    <div class="metric-card">
+      <strong>Uptime (hrs)</strong>
+      <div class="metric-value" id="uptime">0.0</div>
+    </div>
+  </div>
+</div>
+
 <div class="stats-grid">
   <div class="stat-card">
     <div class="stat-number" id="total-leads">0</div>
@@ -33,33 +117,8 @@
 </div>
 
 <div class="card">
-  <h3>🤖 Bot Control</h3>
-  <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
-    <div>
-      <strong>Status:</strong>
-      <span id="bot-status" style="color: var(--error)">Stopped</span>
-    </div>
-    <div style="margin-left: auto;">
-      <button id="start-bot-btn" onclick="startBot()" class="btn">▶️ Start Bot</button>
-      <button id="stop-bot-btn" onclick="stopBot()" class="btn btn-danger" style="display: none;">⏹️ Stop Bot</button>
-    </div>
-  </div>
-
-  <div id="bot-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-    <div><strong>Total Discovered:</strong> <span id="total-discovered">0</span></div>
-    <div><strong>Total Audited:</strong> <span id="total-audited">0</span></div>
-    <div><strong>Outreach Sent:</strong> <span id="total-outreach">0</span></div>
-    <div><strong>Daily Audits:</strong> <span id="daily-audits">0</span></div>
-    <div><strong>Daily Outreach:</strong> <span id="daily-outreach">0</span></div>
-    <div><strong>Uptime:</strong> <span id="uptime">0.0</span>h</div>
-  </div>
-</div>
-
-<div class="card">
   <h3>📝 Recent Activity</h3>
-  <div id="activity-log">
-    <!-- Activity logs will be populated here -->
-  </div>
+  <div id="activity-log"></div>
 </div>
 
 <script>
@@ -199,41 +258,22 @@ function showTestEmailResult(message, type) {
 function startBot() {
   fetch('/admin/bot/start', { method: 'POST' })
     .then(response => response.json())
-    .then(data => {
-      if (data.status === 'started') {
-        updateDashboard(); // Refresh dashboard immediately
-      } else {
-        alert('Error starting bot: ' + (data.error || 'Unknown error'));
-      }
-    })
-    .catch(error => alert('Error: ' + error));
+    .then(() => updateDashboard())
+    .catch(error => console.error('Start bot error:', error));
 }
 
 function stopBot() {
   fetch('/admin/bot/stop', { method: 'POST' })
     .then(response => response.json())
-    .then(data => {
-      if (data.status === 'stopped') {
-        updateDashboard(); // Refresh dashboard immediately
-      } else {
-        alert('Error stopping bot: ' + (data.error || 'Unknown error'));
-      }
-    })
-    .catch(error => alert('Error: ' + error));
+    .then(() => updateDashboard())
+    .catch(error => console.error('Stop bot error:', error));
 }
 
-// Initialize dashboard update
-updateDashboard(); // Load initial data
-dashboardUpdateInterval = setInterval(updateDashboard, 5000); // Update every 5 seconds
+function initDashboard() {
+  updateDashboard();
+  dashboardUpdateInterval = setInterval(updateDashboard, 15000);
+}
 
-// Cleanup on page unload
-window.addEventListener('beforeunload', function() {
-  if (statusCheckInterval) {
-    clearInterval(statusCheckInterval);
-  }
-  if (dashboardUpdateInterval) {
-    clearInterval(dashboardUpdateInterval);
-  }
-});
+window.addEventListener('DOMContentLoaded', initDashboard);
 </script>
 {% endblock %}

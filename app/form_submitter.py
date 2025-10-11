@@ -100,6 +100,7 @@ class FormSubmitter:
             
             if success:
                 logger.info(f"Successfully submitted contact form for {site.domain}")
+                email_sender.log_form_submission(site, message, form_url, form_data, submission_method='form', status='submitted')
                 data_manager.add_log_entry(
                     "FORM_SUBMISSION",
                     site.domain,

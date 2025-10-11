@@ -43,6 +43,9 @@ class Config:
     DEAD_HOST_CACHE_SECONDS: int = int(os.getenv("DEAD_HOST_CACHE_SECONDS", "1800"))
     AUDIT_MAX_URL_VARIATIONS: int = int(os.getenv("AUDIT_MAX_URL_VARIATIONS", "4"))
 
+    # Outreach messaging overrides (populated from control panel settings)
+    MESSAGE_TEMPLATE: str = os.getenv("MESSAGE_TEMPLATE", "")
+
     # Target Industries (Rankzen focus)
     TARGET_INDUSTRIES: List[str] = os.getenv("TARGET_INDUSTRIES", "landscaping,real_estate,plumbers,hvac,roofers,lawyers").split(",")
     

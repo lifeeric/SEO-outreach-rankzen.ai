@@ -20,6 +20,7 @@ import csv
 import io
 from pathlib import Path
 import logging
+from sqlalchemy import inspect, text
 
 # Import bot components
 from app.config import config
@@ -148,6 +149,10 @@ class EmailOutreach(db.Model):
     sent_at = db.Column(db.DateTime, default=datetime.utcnow)
     follow_up_sent = db.Column(db.Boolean, default=False)
     follow_up_message_id = db.Column(db.String(500))  # Resend message ID for follow-up
+    subject = db.Column(db.String(500))
+    body_html = db.Column(db.Text)
+    body_text = db.Column(db.Text)
+    context = db.Column(db.Text)  # JSON blob for additional metadata (form payload, headers, etc.)
     
     def __repr__(self):
         return f'<EmailOutreach {self.recipient_email} - {self.campaign_type}>'
@@ -282,6 +287,10 @@ def load_settings_into_config():
                 config.OUTREACH_TEMPLATES = json.loads(settings.outreach_templates)
             except Exception as e:
                 logger.error(f"Error parsing outreach templates: {e}")
+        if hasattr(settings, 'message_template') and settings.message_template:
+            config.MESSAGE_TEMPLATE = settings.message_template
+        else:
+            config.MESSAGE_TEMPLATE = ""
 
 def log_activity(level, message, category='general'):
     """Log activity to database"""
@@ -317,12 +326,12 @@ def sync_leads_from_csv():
                 if domain and domain != 'Domain':  # Skip header row
                     lead = Lead.query.filter_by(domain=domain).first()
                     # Parse outreach_sent field - handle various formats
-                    outreach_sent_str = str(row.get('Submission Status', '')).strip().lower()
-                    outreach_sent = outreach_sent_str in ['yes', 'true', '1', 'successful']
+                    submission_status = str(row.get('Submission Status', '')).strip().upper()
+                    submission_method = str(row.get('Submission Method', '')).strip().lower()
+                    outreach_sent = submission_status == 'SUCCESS'
 
-                    # Parse contact_form_found
-                    contact_form_str = str(row.get('Contact Form Found', '')).strip().lower()
-                    contact_form_found = contact_form_str in ['yes', 'true', '1']
+                    # Parse contact_form_found based on actual submission success
+                    contact_form_found = outreach_sent and ('form' in submission_method)
                     
                     if lead:
                         # Update existing lead
@@ -332,6 +341,7 @@ def sync_leads_from_csv():
                         lead.contact_form_found = contact_form_found
                         lead.issues = str(row.get('SEO Issues', '')).strip()
                         lead.recommendations = str(row.get('SEO Recommendations', '')).strip()
+                        lead.updated_at = datetime.utcnow()
                         # Update status based on whether outreach was sent
                         if outreach_sent and lead.status != 'sent':
                             lead.status = 'sent'
@@ -350,7 +360,8 @@ def sync_leads_from_csv():
                             contact_form_found=contact_form_found,
                             issues=str(row.get('SEO Issues', '')).strip(),
                             recommendations=str(row.get('SEO Recommendations', '')).strip(),
-                            status='sent' if outreach_sent else 'audited'
+                            status='sent' if outreach_sent else 'audited',
+                            updated_at=datetime.utcnow()
                         )
                         db.session.add(lead)
                         synced_count += 1
@@ -358,6 +369,30 @@ def sync_leads_from_csv():
             db.session.commit()
             if synced_count > 0 or updated_count > 0:
                 log_activity('INFO', f'Synced {synced_count} new leads and updated {updated_count} existing leads from CSV (total rows: {len(df)})', 'sync')
+
+def ensure_email_outreach_columns():
+    """Ensure the EmailOutreach table has the latest columns used by the app."""
+    try:
+        inspector = inspect(db.engine)
+        existing_columns = {col['name'] for col in inspector.get_columns('email_outreach')}
+        ddl_statements = []
+
+        if 'subject' not in existing_columns:
+            ddl_statements.append('ALTER TABLE email_outreach ADD COLUMN subject TEXT')
+        if 'body_html' not in existing_columns:
+            ddl_statements.append('ALTER TABLE email_outreach ADD COLUMN body_html TEXT')
+        if 'body_text' not in existing_columns:
+            ddl_statements.append('ALTER TABLE email_outreach ADD COLUMN body_text TEXT')
+        if 'context' not in existing_columns:
+            ddl_statements.append('ALTER TABLE email_outreach ADD COLUMN context TEXT')
+
+        if ddl_statements:
+            with db.engine.begin() as connection:
+                for ddl in ddl_statements:
+                    connection.execute(text(ddl))
+            logger.info("Updated email_outreach table with new columns: %s", ', '.join(stmt.split()[-1] for stmt in ddl_statements))
+    except Exception as exc:
+        logger.error(f"Failed to ensure email_outreach columns: {exc}")
         else:
             log_activity('WARNING', 'CSV file not found for lead sync', 'sync')
     except Exception as e:
@@ -447,6 +482,11 @@ def dashboard():
                          responded_leads=responded_leads,
                          recent_logs=recent_logs,
                          bot_running=bot_running)
+
+@app.route('/dashboard')
+def dashboard_shortcut():
+    """Convenience route so /dashboard redirects to the admin dashboard"""
+    return redirect(url_for('dashboard'))
 
 @app.route('/admin/api/dashboard-data')
 def dashboard_data():
@@ -754,9 +794,10 @@ def email_outreach():
         return redirect(url_for('admin'))
 
     # Get email outreach statistics
-    total_emails_sent = EmailOutreach.query.count()
+    total_emails_sent = EmailOutreach.query.filter(EmailOutreach.campaign_type != 'form').count()
     outreach_emails = EmailOutreach.query.filter_by(campaign_type='outreach').count()
     followup_emails = EmailOutreach.query.filter_by(campaign_type='follow-up').count()
+    form_submissions = EmailOutreach.query.filter_by(campaign_type='form').count()
     
     # Get pending follow-ups (outreach emails sent 3+ days ago with no follow-up sent)
     from datetime import datetime, timedelta
@@ -779,6 +820,7 @@ def email_outreach():
                          total_emails_sent=total_emails_sent,
                          outreach_emails=outreach_emails,
                          followup_emails=followup_emails,
+                         form_submissions=form_submissions,
                          pending_followups=pending_followups,
                          recent_emails=recent_emails,
                          last_followup_check=last_followup_check)
@@ -839,8 +881,8 @@ def clear_data():
                 'Overall SEO Score', 'Title Score', 'Description Score', 'Speed Score', 
                 'Mobile Score', 'Accessibility Score', 'SEO Issues', 'SEO Recommendations', 
                 'Load Time (seconds)', 'AI Report Subject', 'AI Report Message', 
-                'Report Generated', 'Contact Form Found', 'Form URL', 'Submission Status', 
-                'Submission Error', 'CAPTCHA Detected', 'CAPTCHA Type', 'CAPTCHA Solved',
+                'Report Generated', 'Contact Form Found', 'Form URL', 'Submission Status', 'Submission Method',
+                'Submission Error', 'Email Used', 'CAPTCHA Detected', 'CAPTCHA Type', 'CAPTCHA Solved',
                 'Discovery Date', 'Audit Date', 'Outreach Date', 'Blacklisted',
                 'Page Size (KB)', 'Images Count', 'Images With Alt', 'Links Count', 
                 'Broken Links Count', 'H1 Count', 'Meta Description Length'
@@ -872,7 +914,8 @@ def initialize_app():
     try:
         # Create database tables
         db.create_all()
-        
+        ensure_email_outreach_columns()
+
         # Create default settings if they don't exist
         if not Settings.query.first():
             import json

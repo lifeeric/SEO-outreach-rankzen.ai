@@ -1,0 +1,28 @@
+# Core web framework & control panel
+Flask>=2.3
+Flask-SQLAlchemy>=3.1
+Flask-WTF>=1.2
+WTForms>=3.1
+
+# HTTP clients and automation
+requests>=2.31
+playwright>=1.43
+schedule>=1.2
+
+# Data modeling & validation
+pydantic[email]>=1.10,<2.0
+email-validator>=2.1
+
+# AI, payments, and external APIs
+openai>=1.0
+stripe>=5.0
+
+# Parsing, scraping, and media
+beautifulsoup4>=4.12
+Pillow>=10.0
+pandas>=2.0
+
+# Utilities & security
+python-dotenv>=1.0
+cryptography>=42.0
+

@@ -11,7 +11,7 @@ class AIReporter:
     """Generates AI-powered outreach messages using Rankzen templates"""
     
     def __init__(self):
-        self.templates = config.OUTREACH_TEMPLATES
+        self.default_templates = config.OUTREACH_TEMPLATES
     
     @property
     def openai_api_key(self):
@@ -42,27 +42,17 @@ class AIReporter:
             audit_link = f"https://rankzen.com/audit/{site.domain}"
             
             # Choose template based on score
+            templates = getattr(config, 'OUTREACH_TEMPLATES', self.default_templates)
+
             if seo_score.overall_score < 50:
                 template = "cold_email_1"  # Value-forward for low scores
             else:
                 template = "cold_email_2"  # Competitor angle for medium scores
-            
+
             # Get template
-            template_data = self.templates[template]
-            
-            # Fill placeholders according to client specifications
-            subject = self._fill_placeholders(template_data["subject"], {
-                "BusinessName": business_name,
-                "City": city,
-                "Keyword": f"{site.business_type} {city}",
-                "Issue": top_issue,
-                "Score": seo_score.overall_score,
-                "TopFix": top_fix,
-                "AuditLink": audit_link,
-                "SenderName": "Rankzen"
-            })
-            
-            body = self._fill_placeholders(template_data["body"], {
+            template_data = templates[template]
+
+            placeholders = {
                 "FirstName": first_name,
                 "BusinessName": business_name,
                 "City": city,
@@ -74,28 +64,42 @@ class AIReporter:
                 "ETA": "48 hours",
                 "AuditLink": audit_link,
                 "SenderName": "Rankzen"
-            })
-            
-            # Generate SMS version (≤320 chars as per client spec)
-            sms_body = self._fill_placeholders(self.templates["sms"]["body"], {
-                "FirstName": first_name,
-                "Score": seo_score.overall_score,
-                "TopFix": top_fix,
-                "AuditLink": audit_link
-            })
-            
-            # Generate LinkedIn DM
-            linkedin_body = self._fill_placeholders(self.templates["linkedin_dm"]["body"], {
-                "FirstName": first_name,
+            }
+
+            # Fill placeholders according to client specifications
+            subject = self._fill_placeholders(template_data["subject"], {
                 "BusinessName": business_name,
-                "Issue": top_issue,
-                "Score": seo_score.overall_score,
-                "TopFix": top_fix,
-                "AuditLink": audit_link
+                "City": city,
+                "Keyword": placeholders["Keyword"],
+                "Issue": placeholders["Issue"],
+                "Score": placeholders["Score"],
+                "TopFix": placeholders["TopFix"],
+                "AuditLink": placeholders["AuditLink"],
+                "SenderName": placeholders["SenderName"]
             })
-            
+
+            body = self._fill_placeholders(template_data["body"], placeholders)
+
+            # Generate SMS version (≤320 chars as per client spec)
+            sms_body = self._fill_placeholders(templates["sms"]["body"], {
+                "FirstName": placeholders["FirstName"],
+                "Score": placeholders["Score"],
+                "TopFix": placeholders["TopFix"],
+                "AuditLink": placeholders["AuditLink"]
+            })
+
+            # Generate LinkedIn DM
+            linkedin_body = self._fill_placeholders(templates["linkedin_dm"]["body"], {
+                "FirstName": placeholders["FirstName"],
+                "BusinessName": placeholders["BusinessName"],
+                "Issue": placeholders["Issue"],
+                "Score": placeholders["Score"],
+                "TopFix": placeholders["TopFix"],
+                "AuditLink": placeholders["AuditLink"]
+            })
+
             # Generate cold call opener (20s as per client spec)
-            call_opener = self._fill_placeholders(self.templates["cold_call"]["opener"], {
+            call_opener = self._fill_placeholders(templates["cold_call"]["opener"], {
                 "FirstName": first_name,
                 "YourName": "Alex",
                 "Channel": "Google Business Profile",
@@ -103,7 +107,11 @@ class AIReporter:
                 "EstImpact": "$500-2000 monthly",
                 "TopFix": top_fix
             })
-            
+
+            custom_template = getattr(config, 'MESSAGE_TEMPLATE', '') or ''
+            if custom_template.strip():
+                body = self._fill_placeholders(custom_template, placeholders)
+
             return OutreachMessage(
                 subject=subject,
                 message=body,

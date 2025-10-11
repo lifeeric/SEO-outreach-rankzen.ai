@@ -4,6 +4,65 @@
 {% block header %}Email Outreach{% endblock %}
 
 {% block content %}
+<style>
+  .btn-small {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--muted);
+    border-radius: 12px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .btn-small:hover {
+    background: var(--brand);
+    color: #041019;
+  }
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(7, 11, 25, 0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-content {
+    background: var(--card);
+    box-shadow: var(--shadow);
+    border-radius: var(--radius);
+    padding: 2rem;
+    max-width: 640px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal-close {
+    float: right;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .email-meta {
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+  .email-body {
+    background: var(--panel);
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+  }
+  .email-body pre {
+    white-space: pre-wrap;
+    margin: 0;
+  }
+</style>
+
 <div class="stats-grid">
   <div class="stat-card">
     <div class="stat-number">{{ total_emails_sent }}</div>
@@ -16,6 +75,10 @@
   <div class="stat-card">
     <div class="stat-number">{{ followup_emails }}</div>
     <div class="stat-label">Follow-up Emails</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-number">{{ form_submissions }}</div>
+    <div class="stat-label">Form Submissions</div>
   </div>
   <div class="stat-card">
     <div class="stat-number">{{ pending_followups }}</div>
@@ -37,6 +100,31 @@
   
   <p>System automatically checks for follow-ups every 3 hours. Click the button above to manually trigger a check.</p>
 </div>
+<div id="email-modal" class="modal-overlay">
+  <div class="modal-content">
+    <span class="modal-close" onclick="closeEmailModal()">✖</span>
+    <h3 id="modal-subject">Email Preview</h3>
+    <div class="email-meta">
+      <div><strong>Recipient:</strong> <span id="modal-recipient"></span></div>
+      <div><strong>Domain:</strong> <span id="modal-domain"></span></div>
+      <div><strong>Type:</strong> <span id="modal-type"></span></div>
+      <div><strong>Status:</strong> <span id="modal-status"></span></div>
+      <div><strong>Sent:</strong> <span id="modal-sent-at"></span></div>
+    </div>
+    <div class="email-body">
+      <h4>HTML</h4>
+      <div id="modal-body-html"></div>
+    </div>
+    <div class="email-body">
+      <h4>Text</h4>
+      <pre id="modal-body-text"></pre>
+    </div>
+    <div class="email-body">
+      <h4>Context</h4>
+      <pre id="modal-context"></pre>
+    </div>
+  </div>
+</div>
 
 <div class="card">
   <h3>📋 Recent Email Activity</h3>
@@ -49,6 +137,7 @@
         <th>Type</th>
         <th>Status</th>
         <th>Sent At</th>
+        <th>Action</th>
       </tr>
     </thead>
     <tbody>
@@ -67,6 +156,9 @@
           </span>
         </td>
         <td>{{ email.sent_at.strftime('%Y-%m-%d %H:%M') if email.sent_at else 'N/A' }}</td>
+        <td>
+          <button class="btn-small" onclick="openEmailModal(this)" data-email='{{ {"recipient": email.recipient_email, "domain": email.domain, "campaign_type": email.campaign_type, "status": email.status, "subject": email.subject, "body_html": email.body_html, "body_text": email.body_text, "context": email.context, "sent_at": email.sent_at.strftime('%Y-%m-%d %H:%M') if email.sent_at else 'N/A' } | tojson | safe }}'>View</button>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -77,6 +169,45 @@
 </div>
 
 <script>
+function openEmailModal(button) {
+  try {
+    const data = JSON.parse(button.dataset.email);
+    document.getElementById('modal-subject').textContent = data.subject || 'Email Preview';
+    document.getElementById('modal-recipient').textContent = data.recipient || 'N/A';
+    document.getElementById('modal-domain').textContent = data.domain || 'N/A';
+    document.getElementById('modal-type').textContent = data.campaign_type || 'N/A';
+    document.getElementById('modal-status').textContent = data.status || 'N/A';
+    document.getElementById('modal-sent-at').textContent = data.sent_at || 'N/A';
+    document.getElementById('modal-body-html').innerHTML = data.body_html || '<em>No HTML body available.</em>';
+    document.getElementById('modal-body-text').textContent = data.body_text || 'No text body available.';
+    let context = data.context;
+    if (typeof context === 'string') {
+      try { context = JSON.parse(context); } catch (err) { /* keep string */ }
+    }
+    if (context && typeof context === 'object') {
+      document.getElementById('modal-context').textContent = JSON.stringify(context, null, 2);
+    } else if (context) {
+      document.getElementById('modal-context').textContent = context;
+    } else {
+      document.getElementById('modal-context').textContent = 'No additional metadata.';
+    }
+    document.getElementById('email-modal').classList.add('active');
+  } catch (error) {
+    console.error('Failed to open modal', error);
+    alert('Unable to display email details.');
+  }
+}
+
+function closeEmailModal() {
+  document.getElementById('email-modal').classList.remove('active');
+}
+
+document.getElementById('email-modal').addEventListener('click', function(evt) {
+  if (evt.target === this) {
+    closeEmailModal();
+  }
+});
+
 function checkFollowUps() {
   fetch('/admin/email/check_followups', { method: 'POST' })
     .then(response => response.json())
