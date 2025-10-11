@@ -43,6 +43,17 @@ endblock %} {% block header %}Settings{% endblock %} {% block content %}
           >
         </div>
 
+        <div class="form-group">
+          {{ form.resend_webhook_secret.label }} {{
+          form.resend_webhook_secret(
+            class="form-control",
+            placeholder="res_webhook_..."
+          ) }}
+          <small style="color: var(--muted)"
+            >Used to verify incoming webhook events from Resend</small
+          >
+        </div>
+
         <h4 style="margin-top: 2rem">💳 Stripe Configuration</h4>
 
         <div class="form-group">

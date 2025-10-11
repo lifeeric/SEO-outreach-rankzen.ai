@@ -60,6 +60,7 @@ class Settings(db.Model):
     stripe_publishable_key = db.Column(db.String(500))
     stripe_product_key = db.Column(db.String(500))
     resend_api_key = db.Column(db.String(500))
+    resend_webhook_secret = db.Column(db.String(500))
     target_industries = db.Column(db.Text, default='landscaping,real_estate,plumbers,hvac,roofers,lawyers')
     target_regions = db.Column(db.Text, default='New York City,Miami-Dade,Austin,Los Angeles,Phoenix')
     message_template = db.Column(db.Text)
@@ -204,6 +205,7 @@ class SettingsForm(FlaskForm):
     stripe_publishable_key = StringField('Stripe Publishable Key')
     stripe_product_key = StringField('Stripe Product Key')
     resend_api_key = StringField('Resend API Key')
+    resend_webhook_secret = StringField('Resend Webhook Secret')
     target_industries = TextAreaField('Target Industries (comma-separated)')
     target_regions = TextAreaField('Target Regions (comma-separated)')
     message_template = TextAreaField('Message Template')
@@ -303,6 +305,8 @@ def load_settings_into_config():
             config.STRIPE_PRODUCT_KEY = settings.decrypt_value(settings.stripe_product_key)
         if settings.resend_api_key and settings.resend_api_key.strip():
             config.RESEND_API_KEY = settings.decrypt_value(settings.resend_api_key)
+        if getattr(settings, 'resend_webhook_secret', None) and settings.resend_webhook_secret.strip():
+            config.RESEND_WEBHOOK_SECRET = settings.decrypt_value(settings.resend_webhook_secret)
         if settings.target_industries and settings.target_industries.strip():
             config.TARGET_INDUSTRIES = [x.strip() for x in settings.target_industries.split(',')]
         if settings.target_regions and settings.target_regions.strip():
@@ -430,6 +434,24 @@ def ensure_email_outreach_columns():
             )
     except Exception as exc:
         logger.error(f"Failed to ensure email_outreach columns: {exc}")
+
+def ensure_settings_columns():
+    """Ensure settings table includes columns added after initial release."""
+    try:
+        inspector = inspect(db.engine)
+        existing_columns = {col['name'] for col in inspector.get_columns('settings')}
+        statements = []
+        if 'resend_webhook_secret' not in existing_columns:
+            statements.append('ALTER TABLE settings ADD COLUMN resend_webhook_secret VARCHAR(500)')
+        if statements:
+            with db.engine.begin() as connection:
+                for ddl in statements:
+                    connection.execute(text(ddl))
+            logger.info('Updated settings table with new columns: %s', ', '.join(stmt.split()[-1] for stmt in statements))
+    except Exception as exc:
+        logger.error(f'Failed to ensure settings columns: {exc}')
+
+
 
 def csv_sync_worker():
     """Background worker for periodically syncing CSV data to database"""
@@ -788,6 +810,7 @@ def settings():
         form.stripe_publishable_key.data = settings_obj.decrypt_value(settings_obj.stripe_publishable_key)
         form.stripe_product_key.data = settings_obj.decrypt_value(settings_obj.stripe_product_key)
         form.resend_api_key.data = settings_obj.decrypt_value(settings_obj.resend_api_key)
+        form.resend_webhook_secret.data = settings_obj.decrypt_value(settings_obj.resend_webhook_secret)
         form.target_industries.data = settings_obj.target_industries
         form.target_regions.data = settings_obj.target_regions
         form.message_template.data = settings_obj.message_template
@@ -809,6 +832,7 @@ def settings():
         settings_obj.stripe_publishable_key = settings_obj.encrypt_value(form.stripe_publishable_key.data)
         settings_obj.stripe_product_key = settings_obj.encrypt_value(form.stripe_product_key.data)
         settings_obj.resend_api_key = settings_obj.encrypt_value(form.resend_api_key.data)
+        settings_obj.resend_webhook_secret = settings_obj.encrypt_value(form.resend_webhook_secret.data)
         settings_obj.target_industries = form.target_industries.data
         settings_obj.target_regions = form.target_regions.data
         settings_obj.message_template = form.message_template.data
@@ -1097,6 +1121,7 @@ def initialize_app():
     try:
         # Create database tables
         db.create_all()
+        ensure_settings_columns()
         ensure_email_outreach_columns()
 
         # Create default settings if they don't exist
@@ -1126,6 +1151,8 @@ def initialize_app():
             # Try to drop and recreate tables
             db.drop_all()
             db.create_all()
+            ensure_settings_columns()
+            ensure_email_outreach_columns()
             
             # Create default settings
             import json
