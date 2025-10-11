@@ -170,7 +170,7 @@ class EmailSender:
             import sys
             import os
             sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from web_control_panel import db, EmailOutreach, app
+            from web_control_panel import db, EmailOutreach, Lead, app
             
             # Use app context to avoid "The current Flask app is not registered" error
             with app.app_context():
@@ -187,6 +187,39 @@ class EmailSender:
                     context=json.dumps(context) if isinstance(context, (dict, list)) else context
                 )
                 db.session.add(email_record)
+
+                # Update lead progress immediately so dashboard stats stay accurate
+                lead_domain = email_record.domain
+                if lead_domain:
+                    lead = Lead.query.filter_by(domain=lead_domain).first()
+                    if lead:
+                        submission_method = ''
+                        raw_context = context if isinstance(context, dict) else None
+                        if raw_context is None and isinstance(context, str):
+                            try:
+                                raw_context = json.loads(context)
+                            except Exception:
+                                raw_context = None
+                        if raw_context and isinstance(raw_context, dict):
+                            submission_method = str(raw_context.get('submission_method', '')).lower()
+
+                        # Determine outreach/contact flags
+                        success_states = {'sent', 'submitted'}
+                        if campaign_type == 'form':
+                            if status.lower() in success_states and 'form' in submission_method:
+                                lead.contact_form_found = True
+                                lead.outreach_sent = True
+                                lead.status = 'sent'
+                            elif status.lower() in {'failed', 'error'} and not lead.outreach_sent:
+                                lead.contact_form_found = False
+                        else:
+                            if status.lower() == 'sent':
+                                lead.outreach_sent = True
+                                if lead.status != 'responded':
+                                    lead.status = 'sent'
+
+                        lead.updated_at = datetime.utcnow()
+
                 db.session.commit()
                 logger.info(f"✅ Email record added to database for {recipient_email} - {campaign_type}")
         except Exception as e:
