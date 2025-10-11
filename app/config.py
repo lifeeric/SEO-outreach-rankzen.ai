@@ -45,6 +45,8 @@ class Config:
 
     # Outreach messaging overrides (populated from control panel settings)
     MESSAGE_TEMPLATE: str = os.getenv("MESSAGE_TEMPLATE", "")
+    RESEND_WEBHOOK_SECRET: str = os.getenv("RESEND_WEBHOOK_SECRET", "")
+    EMAIL_RATE_LIMIT_PER_MIN: int = int(os.getenv("EMAIL_RATE_LIMIT_PER_MIN", "30"))
 
     # Target Industries (Rankzen focus)
     TARGET_INDUSTRIES: List[str] = os.getenv("TARGET_INDUSTRIES", "landscaping,real_estate,plumbers,hvac,roofers,lawyers").split(",")

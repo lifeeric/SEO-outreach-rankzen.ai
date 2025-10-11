@@ -129,6 +129,11 @@ To enable email outreach:
 - `data/qa_reviews.jsonl` - Human QA reviews
 - `data/encrypted_credentials.jsonl` - Securely stored client credentials
 
+## 🩺 Service Health
+
+- API health: `GET /health/email` returns Resend connectivity status
+- Webhooks: configure Resend to post delivery/bounce/complaint events to `/admin/email/webhook`
+
 ## 🎯 **TARGET INDUSTRIES**
 
 - Landscaping

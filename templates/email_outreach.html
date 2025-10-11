@@ -87,6 +87,47 @@
 </div>
 
 <div class="card">
+  <h3>📊 Provider Health</h3>
+  <div style="display:flex; flex-wrap:wrap; gap:1.5rem;">
+    <div>
+      <strong>Provider:</strong> {{ email_status.provider }}
+    </div>
+    <div>
+      <strong>Connected:</strong>
+      <span style="color: {{ 'var(--success)' if email_status.connected else 'var(--error)' }};">
+        {{ 'Yes' if email_status.connected else 'No' }}
+      </span>
+    </div>
+    <div>
+      <strong>Last Event:</strong> {{ email_status.last_event }}
+      {% if email_status.last_event_time %}
+        <small style="color: var(--muted);">({{ email_status.last_event_time.strftime('%Y-%m-%d %H:%M') }})</small>
+      {% endif %}
+    </div>
+    <div>
+      <strong>7-day Sent:</strong> {{ email_status.sent_7d }}
+    </div>
+    <div>
+      <strong>7-day Delivered:</strong> {{ email_status.delivered_7d }}
+    </div>
+    <div>
+      <strong>7-day Bounced:</strong> {{ email_status.bounced_7d }}
+    </div>
+    <div>
+      <strong>7-day Complaints:</strong> {{ email_status.complaints_7d }}
+    </div>
+    <div>
+      <strong>Last Follow-up Sweep:</strong>
+      {% if email_status.last_followup_check %}
+        {{ email_status.last_followup_check.strftime('%Y-%m-%d %H:%M') }}
+      {% else %}
+        Never
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
   <h3>📧 Email Outreach Control</h3>
   <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
     <div>
@@ -125,6 +166,34 @@
     </div>
   </div>
 </div>
+
+{% if recent_events %}
+<div class="card">
+  <h3>📡 Recent Email Events</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Recipient</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in recent_events %}
+      <tr>
+        <td>{{ event.occurred_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>{{ event.recipient_email or 'N/A' }}</td>
+        <td>{{ event.event_type or 'N/A' }}</td>
+        <td>{{ event.status or 'N/A' }}</td>
+        <td>{{ event.reason or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 <div class="card">
   <h3>📋 Recent Email Activity</h3>

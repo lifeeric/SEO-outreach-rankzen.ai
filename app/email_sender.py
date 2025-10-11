@@ -1,6 +1,8 @@
 import json
 import requests
 import logging
+import time
+import threading
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
@@ -15,6 +17,8 @@ class EmailSender:
     
     def __init__(self):
         self.base_url = "https://api.resend.com"
+        self._rate_history: List[float] = []
+        self._lock = threading.Lock()
     
     @property
     def api_key(self):
@@ -49,7 +53,22 @@ class EmailSender:
         if not recipient_email:
             logger.warning(f"No email address provided for {site.domain}")
             return False
-        
+
+        if self._is_suppressed(recipient_email):
+            logger.warning(f"Email to {recipient_email} suppressed due to previous bounces/complaints")
+            self._record_email_in_db(
+                site,
+                recipient_email,
+                campaign_type,
+                None,
+                "suppressed",
+                subject=getattr(message, 'subject', None),
+                body_html=getattr(message, 'message', None),
+                body_text=self._html_to_text(getattr(message, 'message', '') or ''),
+                context={"reason": "suppressed"}
+            )
+            return False
+
         try:
             html_body = message.message.replace('\n', '<br>') if message.message else ''
             text_body = self._html_to_text(html_body or message.message)
@@ -79,20 +98,32 @@ class EmailSender:
                 "headers": headers
             }
 
-            # Send email via Resend API
-            response = requests.post(
-                f"{self.base_url}/emails",
-                headers=self.headers,
-                json=params,
-                timeout=30
-            )
-            
+            self._enforce_rate_limit()
+
+            response = None
+            for attempt in range(config.HTTP_MAX_RETRIES + 1):
+                try:
+                    response = requests.post(
+                        f"{self.base_url}/emails",
+                        headers=self.headers,
+                        json=params,
+                        timeout=30
+                    )
+                    break
+                except requests.RequestException as exc:
+                    logger.warning(f"Resend send attempt {attempt+1} failed: {exc}")
+                    if attempt == config.HTTP_MAX_RETRIES:
+                        raise
+                    time.sleep((attempt + 1) * config.HTTP_BACKOFF_FACTOR)
+
             message_id = None
-            if response.status_code == 200:
+            if response is not None and response.status_code == 200:
                 result = response.json()
                 message_id = result.get('id', 'unknown')
                 logger.info(f"✅ Email sent successfully to {recipient_email} for {site.domain}. Message ID: {message_id}")
                 
+                self._note_send_timestamp()
+
                 # Record email in database
                 self._record_email_in_db(
                     site,
@@ -124,7 +155,7 @@ class EmailSender:
                     context=context_payload
                 )
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ Error sending email to {recipient_email} for {site.domain}: {e}")
             
@@ -142,7 +173,7 @@ class EmailSender:
                 context=context_payload
             )
             return False
-    
+
     def _record_email_in_db(self,
                             site: Optional[BusinessSite],
                             recipient_email: str,
@@ -170,7 +201,7 @@ class EmailSender:
             import sys
             import os
             sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from web_control_panel import db, EmailOutreach, Lead, app
+            from web_control_panel import db, EmailOutreach, Lead, EmailSuppression, app
             
             # Use app context to avoid "The current Flask app is not registered" error
             with app.app_context():
@@ -306,8 +337,12 @@ class EmailSender:
             import sys
             import os
             sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from web_control_panel import db, EmailOutreach
-            
+            from web_control_panel import db, EmailOutreach, EmailSuppression
+
+            if self._is_suppressed(email_record.recipient_email):
+                logger.info(f"Skipping follow-up to suppressed email {email_record.recipient_email}")
+                return False
+
             # Create follow-up message content
             follow_up_subject = f"Following up on my previous message about {email_record.domain}"
             follow_up_body = f"""<p>Hi there,</p>
@@ -334,20 +369,32 @@ class EmailSender:
                 "reply_to": ["gennarobc@gmail.com"],
                 "headers": headers
             }
-            
-            # Send follow-up email via Resend API
-            response = requests.post(
-                f"{self.base_url}/emails",
-                headers=self.headers,
-                json=params,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
+
+            self._enforce_rate_limit()
+
+            response = None
+            for attempt in range(config.HTTP_MAX_RETRIES + 1):
+                try:
+                    response = requests.post(
+                        f"{self.base_url}/emails",
+                        headers=self.headers,
+                        json=params,
+                        timeout=30
+                    )
+                    break
+                except requests.RequestException as exc:
+                    logger.warning(f"Resend follow-up attempt {attempt+1} failed: {exc}")
+                    if attempt == config.HTTP_MAX_RETRIES:
+                        raise
+                    time.sleep((attempt + 1) * config.HTTP_BACKOFF_FACTOR)
+
+            if response is not None and response.status_code == 200:
                 result = response.json()
                 follow_up_message_id = result.get('id', 'unknown')
                 logger.info(f"✅ Follow-up email sent to {email_record.recipient_email}. Message ID: {follow_up_message_id}")
                 
+                self._note_send_timestamp()
+
                 # Update the original record to mark follow-up as sent
                 email_record.follow_up_sent = True
                 email_record.follow_up_message_id = follow_up_message_id
@@ -418,7 +465,8 @@ class EmailSender:
             context_payload = {
                 "form_url": form_url,
                 "form_fields": form_fields or {},
-                "submission_method": submission_method
+                "submission_method": submission_method,
+                "status": status
             }
             html_body = message.message.replace('\n', '<br>') if message.message else ''
             text_body = self._html_to_text(html_body or message.message)
@@ -449,7 +497,7 @@ class EmailSender:
         """
         if not email or not isinstance(email, str):
             return False
-            
+        
         # Basic email format validation
         return "@" in email and "." in email.split("@")[-1]
 
@@ -461,6 +509,56 @@ class EmailSender:
             return soup.get_text(separator='\n').strip()
         except Exception:
             return str(html)
+
+    def _enforce_rate_limit(self):
+        limit = getattr(config, 'EMAIL_RATE_LIMIT_PER_MIN', 0)
+        if not limit or limit <= 0:
+            return
+        window = 60
+        now = time.time()
+        with self._lock:
+            self._rate_history = [ts for ts in self._rate_history if now - ts < window]
+            if len(self._rate_history) >= limit:
+                sleep_time = window - (now - self._rate_history[0])
+                if sleep_time > 0:
+                    logger.info(f"Throttling email send for {sleep_time:.2f}s to respect rate limits")
+                    time.sleep(sleep_time)
+            # history updated after send via _note_send_timestamp
+
+    def _note_send_timestamp(self):
+        with self._lock:
+            self._rate_history.append(time.time())
+
+    def _is_suppressed(self, recipient_email: str) -> bool:
+        if not recipient_email:
+            return False
+        try:
+            import sys, os
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from web_control_panel import app, EmailSuppression
+            with app.app_context():
+                return EmailSuppression.query.filter_by(email=recipient_email.lower()).first() is not None
+        except Exception as exc:
+            logger.error(f"Error checking suppression list: {exc}")
+            return False
+
+    def _add_to_suppression(self, recipient_email: str, reason: str = '') -> None:
+        if not recipient_email:
+            return
+        try:
+            import sys, os
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from web_control_panel import app, db, EmailSuppression
+            with app.app_context():
+                entry = EmailSuppression.query.filter_by(email=recipient_email.lower()).first()
+                if not entry:
+                    entry = EmailSuppression(email=recipient_email.lower(), reason=reason)
+                    db.session.add(entry)
+                else:
+                    entry.reason = reason or entry.reason
+                db.session.commit()
+        except Exception as exc:
+            logger.error(f"Failed to add {recipient_email} to suppression list: {exc}")
 
 # Create global email sender instance
 email_sender = EmailSender()

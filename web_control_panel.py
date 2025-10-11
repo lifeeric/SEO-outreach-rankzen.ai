@@ -8,6 +8,9 @@ import os
 import asyncio
 import threading
 import time
+import hmac
+import hashlib
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, Response
 from flask_sqlalchemy import SQLAlchemy
@@ -24,6 +27,7 @@ from sqlalchemy import inspect, text
 
 # Import bot components
 from app.config import config
+from app.email_sender import email_sender
 from automated_agent import AutomatedOutreachAgent
 
 # Configure logging
@@ -153,9 +157,32 @@ class EmailOutreach(db.Model):
     body_html = db.Column(db.Text)
     body_text = db.Column(db.Text)
     context = db.Column(db.Text)  # JSON blob for additional metadata (form payload, headers, etc.)
-    
+
     def __repr__(self):
         return f'<EmailOutreach {self.recipient_email} - {self.campaign_type}>'
+
+class EmailEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(500))
+    recipient_email = db.Column(db.String(500))
+    domain = db.Column(db.String(500))
+    event_type = db.Column(db.String(100))
+    status = db.Column(db.String(100))
+    reason = db.Column(db.String(500))
+    occurred_at = db.Column(db.DateTime, default=datetime.utcnow)
+    payload = db.Column(db.Text)
+
+    def __repr__(self):
+        return f'<EmailEvent {self.event_type} {self.message_id}>'
+
+class EmailSuppression(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(500), unique=True, nullable=False)
+    reason = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<EmailSuppression {self.email}>'
 
 class ActivityLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -493,6 +520,40 @@ def dashboard_shortcut():
     """Convenience route so /dashboard redirects to the admin dashboard"""
     return redirect(url_for('dashboard'))
 
+@app.route('/health/email')
+def email_health():
+    """Health check endpoint for the outbound email provider."""
+    status = {
+        'provider': 'Resend',
+        'connected': bool(config.RESEND_API_KEY)
+    }
+
+    if not config.RESEND_API_KEY:
+        status['status'] = 'error'
+        status['message'] = 'RESEND_API_KEY not configured'
+        return jsonify(status), 503
+
+    try:
+        response = requests.get(
+            f"{email_sender.base_url}/domains",
+            headers=email_sender.headers,
+            timeout=10
+        )
+        status['status_code'] = response.status_code
+        if response.status_code < 400:
+            data = response.json()
+            domains = data.get('data') or data.get('domains') or []
+            status['status'] = 'ok'
+            status['domains'] = len(domains)
+            return jsonify(status)
+        status['status'] = 'error'
+        status['message'] = response.text
+        return jsonify(status), 502
+    except Exception as exc:
+        status['status'] = 'error'
+        status['message'] = str(exc)
+        return jsonify(status), 500
+
 @app.route('/admin/api/dashboard-data')
 def dashboard_data():
     """API endpoint to get dashboard data in JSON format"""
@@ -817,9 +878,30 @@ def email_outreach():
     # Get recent email activity (last 20 emails)
     recent_emails = EmailOutreach.query.order_by(EmailOutreach.sent_at.desc()).limit(20).all()
     
-    # Get last follow-up check time from logs
+    # Email event statistics (last 7 days)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    events_7d = EmailEvent.query.filter(EmailEvent.occurred_at >= seven_days_ago).all()
+    sent_7d = EmailOutreach.query.filter(EmailOutreach.campaign_type != 'form', EmailOutreach.sent_at >= seven_days_ago).count()
+    delivered_7d = len([evt for evt in events_7d if evt.event_type and 'deliver' in evt.event_type.lower()])
+    bounced_7d = len([evt for evt in events_7d if evt.event_type and 'bounce' in evt.event_type.lower()])
+    complaints_7d = len([evt for evt in events_7d if evt.event_type and ('complain' in evt.event_type.lower() or 'spam' in evt.event_type.lower())])
+
+    last_event = EmailEvent.query.order_by(EmailEvent.occurred_at.desc()).first()
     last_followup_log = ActivityLog.query.filter_by(category='email').order_by(ActivityLog.timestamp.desc()).first()
     last_followup_check = last_followup_log.timestamp if last_followup_log else None
+
+    provider_connected = bool(config.RESEND_API_KEY)
+    email_status = {
+        'provider': 'Resend',
+        'connected': provider_connected,
+        'last_event': last_event.event_type if last_event else 'n/a',
+        'last_event_time': last_event.occurred_at if last_event else None,
+        'sent_7d': sent_7d,
+        'delivered_7d': delivered_7d,
+        'bounced_7d': bounced_7d,
+        'complaints_7d': complaints_7d,
+        'last_followup_check': last_followup_check
+    }
 
     return render_template('email_outreach.html',
                          total_emails_sent=total_emails_sent,
@@ -828,7 +910,9 @@ def email_outreach():
                          form_submissions=form_submissions,
                          pending_followups=pending_followups,
                          recent_emails=recent_emails,
-                         last_followup_check=last_followup_check)
+                         last_followup_check=last_followup_check,
+                         email_status=email_status,
+                         recent_events=EmailEvent.query.order_by(EmailEvent.occurred_at.desc()).limit(25).all())
 
 # Add a new route for checking follow-ups
 @app.route('/admin/email/check_followups', methods=['POST'])
@@ -845,6 +929,96 @@ def check_email_followups():
     except Exception as e:
         log_activity('ERROR', f'Failed to check follow-ups: {e}', 'email')
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/email/webhook', methods=['POST'])
+def resend_webhook():
+    """Handle incoming webhook events from Resend."""
+    payload = request.get_data()
+    signature = request.headers.get('resend-signature') or request.headers.get('Resend-Signature')
+
+    secret = getattr(config, 'RESEND_WEBHOOK_SECRET', '')
+    if secret:
+        try:
+            expected = hmac.new(secret.encode('utf-8'), payload, hashlib.sha256).hexdigest()
+            if not signature or not hmac.compare_digest(expected, signature):
+                logger.warning('Invalid Resend webhook signature')
+                return jsonify({'success': False, 'error': 'invalid signature'}), 401
+        except Exception as exc:
+            logger.error(f'Resend webhook signature verification failed: {exc}')
+            return jsonify({'success': False, 'error': 'signature error'}), 400
+
+    data = request.get_json(silent=True) or {}
+    event_type = data.get('type') or data.get('event')
+    payload_data = data.get('data') or {}
+    message_id = payload_data.get('id') or data.get('message_id')
+
+    # Fallback for recipient field variations
+    recipient = None
+    to_field = payload_data.get('to')
+    if isinstance(to_field, list) and to_field:
+        recipient = to_field[0]
+    elif isinstance(to_field, str):
+        recipient = to_field
+    else:
+        recipient = payload_data.get('email') or data.get('email')
+
+    domain = payload_data.get('domain')
+    if not domain and recipient and '@' in recipient:
+        domain = recipient.split('@', 1)[1]
+
+    reason = payload_data.get('reason') or payload_data.get('error') or data.get('reason')
+    status = payload_data.get('status') or data.get('status') or event_type
+
+    timestamp = payload_data.get('created_at') or payload_data.get('timestamp') or data.get('created_at')
+    occurred_at = datetime.utcnow()
+    if timestamp:
+        try:
+            occurred_at = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        except Exception:
+            pass
+
+    try:
+        event = EmailEvent(
+            message_id=message_id,
+            recipient_email=recipient,
+            domain=domain,
+            event_type=event_type,
+            status=status,
+            reason=reason,
+            occurred_at=occurred_at,
+            payload=json.dumps(data)
+        )
+        db.session.add(event)
+
+        # Update outreach record if we have a message ID
+        if message_id:
+            outreach = EmailOutreach.query.filter_by(message_id=message_id).order_by(EmailOutreach.id.desc()).first()
+            if outreach:
+                outreach.status = status or outreach.status
+                outreach.body_html = outreach.body_html or payload_data.get('html')
+                outreach.body_text = outreach.body_text or payload_data.get('text')
+                outreach.context = outreach.context or json.dumps(payload_data)
+                outreach.sent_at = occurred_at
+
+                if event_type and 'deliver' in event_type.lower():
+                    outreach.status = 'delivered'
+                elif event_type and 'bounce' in event_type.lower():
+                    outreach.status = 'bounced'
+                elif event_type and ('complain' in event_type.lower() or 'spam' in event_type.lower()):
+                    outreach.status = 'complained'
+
+        # Handle suppressions for hard bounces/complaints
+        if event_type and any(token in event_type.lower() for token in ['bounce', 'complain', 'spam']) and recipient:
+            _email_sender = email_sender
+            _email_sender._add_to_suppression(recipient, reason or event_type)
+
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as exc:
+        db.session.rollback()
+        logger.error(f'Resend webhook processing failed: {exc}')
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 @app.route('/admin/settings/clear-data', methods=['POST'])
 def clear_data():
@@ -867,10 +1041,14 @@ def clear_data():
         
         # Clear leads data
         Lead.query.delete()
-        
+
         # Clear email outreach data
         EmailOutreach.query.delete()
-        
+
+        # Clear email events and suppressions
+        EmailEvent.query.delete()
+        EmailSuppression.query.delete()
+
         # Clear activity logs
         ActivityLog.query.delete()
         
